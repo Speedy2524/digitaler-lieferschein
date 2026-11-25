@@ -41,6 +41,7 @@ function deliveryApp() {
     authEnabled: true,
     authenticated: false,
     currentUser: null,
+    loginUsers: [],
     authToken: localStorage.getItem("it_ls_token") || "",
 
     // Login-Modus: 'password' (Benutzername + Passwort) | 'pin' (Schnell-PIN)
@@ -280,6 +281,7 @@ function deliveryApp() {
         this.authEnabled = Boolean(data.auth_enabled);
         this.authenticated = Boolean(data.authenticated);
         this.currentUser = data.current_user || null;
+        this.loginUsers = Array.isArray(data.login_users) ? data.login_users : [];
 
         this.appTitle = data.app_title || this.appTitle;
         this.departmentName = data.department_name || this.departmentName;
@@ -337,12 +339,13 @@ function deliveryApp() {
 
     async submitLogin() {
       this.loginError = "";
+      const uname = this.loginUsername ? this.loginUsername.trim() : "";
       const payload = {
-        username: this.loginMode === "password" ? this.loginUsername.trim() : null,
+        username: uname || null,
         pin_or_password: this.loginPin,
       };
       if (this.loginMode === "password" && !payload.username) {
-        this.loginError = "Bitte geben Sie Ihren Benutzernamen ein (oder wechseln Sie auf Schnell-PIN).";
+        this.loginError = "Bitte geben Sie Ihren Benutzernamen ein.";
         return;
       }
       if (!payload.pin_or_password) {
@@ -519,8 +522,10 @@ function deliveryApp() {
         this.userFormError = "Benutzername und vollständiger Name sind Pflichtfelder.";
         return;
       }
-      if (!this.userForm.id && (!this.userForm.password || this.userForm.password.length < 4)) {
-        this.userFormError = "Bitte ein Passwort mit mindestens 4 Zeichen vergeben.";
+      const hasPw = this.userForm.password && this.userForm.password.trim().length > 0;
+      const hasPin = this.userForm.pin && this.userForm.pin.trim().length > 0;
+      if (!this.userForm.id && !hasPw && !hasPin) {
+        this.userFormError = "Bitte vergeben Sie ein Passwort oder eine Schnell-PIN (oder beides).";
         return;
       }
 

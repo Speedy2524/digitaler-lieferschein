@@ -13,7 +13,7 @@
   <!-- Alpine.js -->
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
   <!-- Custom Styles -->
-  <link rel="stylesheet" href="/static/styles.css?v=20261125-4">
+  <link rel="stylesheet" href="/static/styles.css?v=20261125-5">
 </head>
 <body class="min-h-screen flex flex-col antialiased" x-data="deliveryApp()" x-init="init()">
 
@@ -173,13 +173,13 @@
       </div>
 
       <div class="p-6">
-        <!-- Umschalter: Benutzername & Passwort vs. Schnell-PIN (iPad) -->
+        <!-- Umschalter: Benutzername & Passwort vs. Nutzername & Schnell-PIN (iPad) -->
         <div class="grid grid-cols-2 border border-zinc-300 mb-5 bg-zinc-100 p-0.5">
           <button type="button"
                   @click="loginMode = 'password'; loginError = ''"
                   class="py-2 text-xs font-mono font-bold uppercase transition"
                   :class="loginMode === 'password' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:text-zinc-900'">
-            Benutzer &amp; Passwort
+            Passwort / PIN
           </button>
           <button type="button"
                   @click="loginMode = 'pin'; loginError = ''"
@@ -192,9 +192,30 @@
         <div x-show="loginError" role="alert" class="mb-4 p-3 bg-red-50 border-l-4 border-red-600 text-xs font-semibold text-red-900" x-text="loginError"></div>
 
         <form @submit.prevent="submitLogin()" action="/api/auth/login" method="POST" aria-labelledby="login-screen-heading" class="space-y-4">
-          <div x-show="loginMode === 'password'">
+          <!-- Schnellauswahl der Benutzer (besonders praktisch auf dem iPad) -->
+          <div x-show="loginUsers.length > 0">
+            <span class="block text-[11px] font-mono font-bold uppercase text-zinc-500 mb-1.5">
+              Konto antippen oder Benutzername unten eingeben:
+            </span>
+            <div class="flex flex-wrap gap-1.5">
+              <template x-for="lu in loginUsers" :key="lu.username">
+                <button type="button"
+                        @click="loginUsername = lu.username; document.getElementById('login-secret-input')?.focus()"
+                        class="px-2.5 py-1.5 text-xs font-mono border transition"
+                        :class="loginUsername.toLowerCase() === lu.username.toLowerCase()
+                          ? 'bg-zinc-900 text-white border-zinc-900 font-bold'
+                          : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800 border-zinc-300'">
+                  <span x-text="lu.full_name"></span>
+                  <span class="opacity-70" x-text="'(' + lu.username + ')'"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+
+          <div>
             <label for="login-username-input" class="block text-xs font-mono font-bold uppercase text-zinc-700 mb-1">
-              Benutzername <span class="text-red-600" aria-hidden="true">*</span>
+              Benutzername <span x-show="loginMode === 'password'" class="text-red-600" aria-hidden="true">*</span>
+              <span x-show="loginMode === 'pin'" class="text-zinc-500 font-normal">(oder oben Konto antippen)</span>
             </label>
             <input type="text"
                    id="login-username-input"
@@ -204,13 +225,13 @@
                    autocorrect="off"
                    autocapitalize="none"
                    spellcheck="false"
-                   placeholder="Benutzername eingeben"
+                   placeholder="z. B. admin_biedenbacher oder Name"
                    class="w-full border border-zinc-300 px-3.5 py-2.5 text-sm font-mono text-zinc-900">
           </div>
 
           <div>
             <label for="login-secret-input" class="block text-xs font-mono font-bold uppercase text-zinc-700 mb-1"
-                   x-text="loginMode === 'password' ? 'Passwort *' : 'Persönliche Schnell-PIN *'">
+                   x-text="loginMode === 'password' ? 'Passwort oder Schnell-PIN *' : 'Persönliche Schnell-PIN *'">
             </label>
             <input type="password"
                    id="login-secret-input"
@@ -219,7 +240,7 @@
                    :inputmode="loginMode === 'pin' ? 'numeric' : 'text'"
                    required
                    autocomplete="current-password"
-                   :placeholder="loginMode === 'password' ? 'Passwort eingeben' : 'PIN eingeben'"
+                   :placeholder="loginMode === 'password' ? 'Passwort oder PIN eingeben' : 'PIN eingeben'"
                    class="w-full border border-zinc-300 px-3.5 py-2.5 text-sm font-mono text-zinc-900">
           </div>
 
@@ -2094,17 +2115,16 @@
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label for="usr-pass" class="block text-xs font-semibold text-zinc-700 mb-1">
-                      Passwort <span x-show="!userForm.id" class="text-red-600" aria-hidden="true">*</span>
+                      Passwort (oder nur PIN rechts)
                     </label>
                     <input type="password" id="usr-pass" name="password" x-model="userForm.password"
-                           :required="!userForm.id"
                            autocomplete="new-password"
-                           :placeholder="userForm.id ? 'Leer = unverändert' : 'Mind. 4 Zeichen'"
+                           :placeholder="userForm.id ? 'Leer = unverändert' : 'Passwort (optional falls PIN)'"
                            class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-sm">
                   </div>
                   <div>
                     <label for="usr-pin" class="block text-xs font-semibold text-zinc-700 mb-1">
-                      iPad Schnell-PIN (optional)
+                      iPad Schnell-PIN
                     </label>
                     <input type="password" id="usr-pin" name="pin" x-model="userForm.pin"
                            inputmode="numeric"
@@ -2320,6 +2340,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20261125-4"></script>
+  <script src="/static/app.js?v=20261125-5"></script>
 </body>
 </html>

@@ -113,7 +113,7 @@ class UserCreateRequest(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=150)
     email: str | None = Field(default=None, max_length=255)
     role: Literal["admin", "staff"] = "staff"
-    password: str = Field(..., min_length=4, max_length=200)
+    password: str | None = Field(default=None, max_length=200)
     pin: str | None = Field(default=None, max_length=20)
     active: bool = True
     add_to_staff_list: bool = True

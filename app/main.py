@@ -114,10 +114,14 @@ def _serialize_user(user: User) -> UserResponse:
 
 
 def _get_current_user_optional(request: Request, db: Session) -> User | None:
-    token = request.headers.get("X-Auth-Token", "") or request.cookies.get("it_ls_token", "")
     now = datetime.now(timezone.utc)
-
-    if token:
+    candidate_tokens = [
+        request.headers.get("X-Auth-Token", "").strip(),
+        request.cookies.get("it_ls_token", "").strip(),
+    ]
+    for token in candidate_tokens:
+        if not token:
+            continue
         session_row = (
             db.query(UserSession)
             .options(joinedload(UserSession.user))
@@ -137,13 +141,12 @@ def _get_current_user_optional(request: Request, db: Session) -> User | None:
         try:
             decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
             username, password = decoded.split(":", 1)
-            user = (
-                db.query(User)
-                .filter(User.username.ilike(username.strip()), User.active.is_(True))
-                .first()
-            )
-            if user and (verify_secret(password, user.password_hash) or verify_secret(password, user.pin_hash)):
-                return user
+            uname = username.strip().lower()
+            active_users = db.query(User).filter(User.active.is_(True)).all()
+            for u in active_users:
+                if u.username.lower() == uname or u.full_name.lower() == uname:
+                    if verify_secret(password, u.password_hash) or verify_secret(password, u.pin_hash):
+                        return u
         except Exception:
             pass
 
@@ -228,11 +231,18 @@ def auth_status(request: Request, db: Session = Depends(get_db)):
         and osticket_email != "tickets@kommune.local"
     )
 
+    active_users = db.query(User).filter(User.active.is_(True)).order_by(User.full_name.asc()).all()
+    login_users_hint = [
+        {"username": u.username, "full_name": u.full_name, "has_pin": bool(u.pin_hash)}
+        for u in active_users
+    ]
+
     return {
         "needs_setup": needs_setup,
         "auth_enabled": auth_enabled,
         "authenticated": is_authenticated,
         "current_user": _serialize_user(current_user).model_dump() if current_user else None,
+        "login_users": login_users_hint,
         "app_title": cfg.get("app_title") or settings.APP_TITLE,
         "department_name": cfg.get("department_name") or settings.DEPARTMENT_NAME,
         "department_subtitle": cfg.get("department_subtitle") or settings.DEPARTMENT_SUBTITLE,
@@ -304,13 +314,18 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
     active_users = db.query(User).filter(User.active.is_(True)).all()
 
     if username_in:
+        uname_lower = username_in.lower()
         for u in active_users:
-            if u.username.lower() == username_in.lower():
-                if verify_secret(secret_in, u.password_hash) or verify_secret(secret_in, u.pin_hash):
+            if (
+                u.username.lower() == uname_lower
+                or u.full_name.lower() == uname_lower
+                or (u.email and u.email.lower() == uname_lower)
+            ):
+                if verify_secret(secret_in, u.pin_hash) or verify_secret(secret_in, u.password_hash):
                     matched_user = u
-                break
+                    break
     else:
-        # Schnell-PIN-Login (oder Passwort falls eindeutig) ohne Benutzernamen
+        # Schnell-PIN-Login (oder Passwort) ohne Benutzernamen
         for u in active_users:
             if verify_secret(secret_in, u.pin_hash) or verify_secret(secret_in, u.password_hash):
                 matched_user = u
@@ -319,13 +334,14 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
     if not matched_user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Ungültiger Benutzername, falsches Passwort oder ungültige Schnell-PIN.",
+            detail="Anmeldung fehlgeschlagen: Benutzername oder Passwort/PIN ungültig.",
         )
 
     token = _create_user_session(db, matched_user)
     response.set_cookie(
         key="it_ls_token",
         value=token,
+        path="/",
         httponly=True,
         samesite="lax",
         max_age=60 * 60 * 24 * 14,
@@ -339,11 +355,18 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
 
 @app.post("/api/auth/logout")
 def logout(request: Request, response: Response, db: Session = Depends(get_db)):
-    token = request.headers.get("X-Auth-Token", "") or request.cookies.get("it_ls_token", "")
-    if token:
-        db.query(UserSession).filter(UserSession.token == token).delete()
+    header_token = request.headers.get("X-Auth-Token", "").strip()
+    cookie_token = request.cookies.get("it_ls_token", "").strip()
+    tokens_to_remove = [t for t in {header_token, cookie_token} if t]
+    if tokens_to_remove:
+        # Auch alle anderen Sessions desselben Benutzers beim expliziten Logout bereinigen
+        sess_rows = db.query(UserSession).filter(UserSession.token.in_(tokens_to_remove)).all()
+        user_ids = {s.user_id for s in sess_rows}
+        db.query(UserSession).filter(UserSession.token.in_(tokens_to_remove)).delete(synchronize_session=False)
+        if user_ids:
+            db.query(UserSession).filter(UserSession.user_id.in_(user_ids)).delete(synchronize_session=False)
         db.commit()
-    response.delete_cookie("it_ls_token")
+    response.delete_cookie(key="it_ls_token", path="/", samesite="lax", httponly=True)
     return {"authenticated": False}
 
 
@@ -372,12 +395,20 @@ def create_user(payload: UserCreateRequest, db: Session = Depends(get_db)):
         )
 
     pin_clean = payload.pin.strip() if payload.pin and payload.pin.strip() else None
+    pw_clean = payload.password.strip() if payload.password and payload.password.strip() else None
+    if not pw_clean and not pin_clean:
+        raise HTTPException(
+            status_code=400,
+            detail="Bitte entweder ein Passwort oder eine Schnell-PIN (oder beides) vergeben.",
+        )
+    effective_pw = pw_clean or pin_clean
+
     new_user = User(
         username=payload.username.strip(),
         full_name=payload.full_name.strip(),
         email=payload.email.strip() if payload.email else None,
         role=payload.role,
-        password_hash=hash_secret(payload.password),
+        password_hash=hash_secret(effective_pw),
         pin_hash=hash_secret(pin_clean) if pin_clean else None,
         active=payload.active,
     )
