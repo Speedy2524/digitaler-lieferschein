@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>IT-Lieferschein {{ note.delivery_number }}</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 16mm 16mm 18mm 16mm;
+      @bottom-right {
+        content: "Seite " counter(page) " von " counter(pages);
+        font-family: "Liberation Sans", "DejaVu Sans", Arial, sans-serif;
+        font-size: 8pt;
+        color: #64748b;
+      }
+      @bottom-left {
+        content: "{{ department_name }} – {{ note.delivery_number }}";
+        font-family: "Liberation Sans", "DejaVu Sans", Arial, sans-serif;
+        font-size: 8pt;
+        color: #64748b;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: "Liberation Sans", "DejaVu Sans", Arial, Helvetica, sans-serif;
+      font-size: 9.5pt;
+      line-height: 1.4;
+      color: #1e293b;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* Kopfzeile */
+    .header-bar {
+      border-bottom: 2.5px solid #0f172a;
+      padding-bottom: 10px;
+      margin-bottom: 16px;
+      display: table;
+      width: 100%;
+    }
+
+    .header-left {
+      display: table-cell;
+      vertical-align: top;
+      width: 62%;
+    }
+
+    .header-right {
+      display: table-cell;
+      vertical-align: top;
+      text-align: right;
+      width: 38%;
+    }
+
+    .dept-title {
+      font-size: 13pt;
+      font-weight: bold;
+      color: #0f172a;
+      margin: 0 0 2px 0;
+    }
+
+    .dept-subtitle {
+      font-size: 9pt;
+      color: #475569;
+      margin: 0 0 2px 0;
+    }
+
+    .dept-contact {
+      font-size: 8pt;
+      color: #64748b;
+      margin: 0;
+    }
+
+    .doc-badge {
+      display: inline-block;
+      background-color: #0f172a;
+      color: #ffffff;
+      font-size: 11pt;
+      font-weight: bold;
+      padding: 5px 10px;
+      border-radius: 3px;
+      letter-spacing: 0.4px;
+    }
+
+    .doc-number {
+      font-size: 11pt;
+      font-weight: bold;
+      color: #0f172a;
+      margin-top: 5px;
+    }
+
+    .doc-date {
+      font-size: 8.5pt;
+      color: #475569;
+      margin-top: 2px;
+    }
+
+    /* Info-Grid (Schule & Metadaten) */
+    .info-container {
+      display: table;
+      width: 100%;
+      margin-bottom: 16px;
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+
+    .info-box-left {
+      display: table-cell;
+      width: 48%;
+      vertical-align: top;
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      padding: 10px 12px;
+    }
+
+    .info-spacer {
+      display: table-cell;
+      width: 4%;
+    }
+
+    .info-box-right {
+      display: table-cell;
+      width: 48%;
+      vertical-align: top;
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      padding: 10px 12px;
+    }
+
+    .box-label {
+      font-size: 7.5pt;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #64748b;
+      margin-bottom: 4px;
+    }
+
+    .school-title {
+      font-size: 12pt;
+      font-weight: bold;
+      color: #0f172a;
+      margin-bottom: 4px;
+    }
+
+    .meta-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 8.8pt;
+    }
+
+    .meta-table td {
+      padding: 2px 0;
+      vertical-align: top;
+    }
+
+    .meta-key {
+      color: #64748b;
+      width: 44%;
+      font-weight: normal;
+    }
+
+    .meta-val {
+      color: #0f172a;
+      font-weight: bold;
+    }
+
+    .ticket-pill {
+      display: inline-block;
+      background: #e0f2fe;
+      color: #0369a1;
+      border: 1px solid #bae6fd;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-weight: bold;
+      font-size: 8.5pt;
+    }
+
+    /* Gerätetabelle */
+    .section-title {
+      font-size: 10pt;
+      font-weight: bold;
+      color: #0f172a;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      margin: 14px 0 6px 0;
+      border-bottom: 1px solid #cbd5e1;
+      padding-bottom: 3px;
+    }
+
+    table.items-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 14px;
+    }
+
+    table.items-table th {
+      background-color: #1e293b;
+      color: #ffffff;
+      font-size: 8.5pt;
+      font-weight: bold;
+      text-align: left;
+      padding: 6px 8px;
+      border: 1px solid #1e293b;
+    }
+
+    table.items-table td {
+      padding: 6px 8px;
+      border: 1px solid #cbd5e1;
+      font-size: 9pt;
+      vertical-align: top;
+    }
+
+    table.items-table tr:nth-child(even) td {
+      background-color: #f8fafc;
+    }
+
+    .col-pos {
+      width: 7%;
+      text-align: center;
+    }
+
+    .col-type {
+      width: 45%;
+    }
+
+    .col-inv {
+      width: 22%;
+      font-family: "Liberation Mono", "DejaVu Sans Mono", monospace;
+      font-weight: bold;
+    }
+
+    .col-sn {
+      width: 18%;
+      font-family: "Liberation Mono", "DejaVu Sans Mono", monospace;
+      font-size: 8.5pt;
+      color: #334155;
+    }
+
+    .col-qty {
+      width: 8%;
+      text-align: center;
+      font-weight: bold;
+    }
+
+    .summary-row td {
+      background-color: #f1f5f9 !important;
+      font-weight: bold;
+      border-top: 2px solid #64748b;
+    }
+
+    /* Notizen */
+    .notes-box {
+      background-color: #fffbeb;
+      border: 1px solid #fde68a;
+      border-left: 3.5px solid #f59e0b;
+      border-radius: 3px;
+      padding: 8px 10px;
+      margin-bottom: 12px;
+      font-size: 8.8pt;
+    }
+
+    .notes-title {
+      font-weight: bold;
+      color: #92400e;
+      margin-bottom: 2px;
+    }
+
+    /* Übergabebestätigung & Unterschrift */
+    .confirmation-box {
+      margin-top: 16px;
+      border: 1.5px solid #94a3b8;
+      border-radius: 4px;
+      padding: 12px;
+      background-color: #ffffff;
+      page-break-inside: avoid;
+    }
+
+    .confirmation-text {
+      font-size: 8.5pt;
+      color: #334155;
+      margin: 0 0 12px 0;
+    }
+
+    .sig-grid {
+      display: table;
+      width: 100%;
+    }
+
+    .sig-col-left {
+      display: table-cell;
+      width: 44%;
+      vertical-align: top;
+      padding-right: 12px;
+    }
+
+    .sig-col-right {
+      display: table-cell;
+      width: 56%;
+      vertical-align: top;
+      border-left: 1px solid #cbd5e1;
+      padding-left: 14px;
+    }
+
+    .sig-image-box {
+      height: 75px;
+      border-bottom: 1px solid #334155;
+      margin-bottom: 5px;
+      text-align: center;
+      background: #fafafa;
+      padding: 4px;
+    }
+
+    .sig-image-box img {
+      max-height: 67px;
+      max-width: 100%;
+      object-fit: contain;
+    }
+
+    .sig-caption {
+      font-size: 8pt;
+      color: #475569;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Kopfzeile -->
+  <div class="header-bar">
+    <div class="header-left">
+      <div class="dept-title">{{ department_name }}</div>
+      <div class="dept-subtitle">{{ department_subtitle }}</div>
+      <div class="dept-contact">{{ department_contact }}</div>
+    </div>
+    <div class="header-right">
+      <div class="doc-badge">IT-LIEFERSCHEIN / ÜBERGABEPROTOKOLL</div>
+      <div class="doc-number">Nr. {{ note.delivery_number }}</div>
+      <div class="doc-date">
+        Datum der Übergabe: {{ completed_at_formatted }}
+      </div>
+    </div>
+  </div>
+
+  <!-- Empfängerschule & Referenzdaten -->
+  <div class="info-container">
+    <div class="info-box-left">
+      <div class="box-label">Empfänger / Schule</div>
+      <div class="school-title">{{ note.school_name }}</div>
+      {% if school_address %}
+      <div style="font-size: 8.5pt; color: #475569; margin-bottom: 6px;">{{ school_address }}</div>
+      {% endif %}
+      <table class="meta-table">
+        <tr>
+          <td class="meta-key">E-Mail Sekretariat:</td>
+          <td class="meta-val">{{ note.recipient_email }}</td>
+        </tr>
+        {% if note.ordered_by %}
+        <tr>
+          <td class="meta-key">Besteller / Ansprechp.:</td>
+          <td class="meta-val">{{ note.ordered_by }}</td>
+        </tr>
+        {% endif %}
+        {% if note.room %}
+        <tr>
+          <td class="meta-key">Aufstellort / Raum:</td>
+          <td class="meta-val">{{ note.room }}</td>
+        </tr>
+        {% endif %}
+      </table>
+    </div>
+
+    <div class="info-spacer"></div>
+
+    <div class="info-box-right">
+      <div class="box-label">Vorgangs- &amp; Referenzdaten</div>
+      <table class="meta-table">
+        <tr>
+          <td class="meta-key">Lieferschein-Nr.:</td>
+          <td class="meta-val">{{ note.delivery_number }}</td>
+        </tr>
+        <tr>
+          <td class="meta-key">Status:</td>
+          <td class="meta-val">{{ note.status }}</td>
+        </tr>
+        <tr>
+          <td class="meta-key">osTicket-Nummer:</td>
+          <td class="meta-val">
+            {% if note.osticket_number %}
+              <span class="ticket-pill">#{{ note.osticket_number }}</span>
+            {% else %}
+              –
+            {% endif %}
+          </td>
+        </tr>
+        {% if note.supplier %}
+        <tr>
+          <td class="meta-key">Lieferant:</td>
+          <td class="meta-val">{{ note.supplier }}</td>
+        </tr>
+        {% endif %}
+        {% if note.invoice_number %}
+        <tr>
+          <td class="meta-key">Rechnungsnummer:</td>
+          <td class="meta-val">{{ note.invoice_number }}</td>
+        </tr>
+        {% endif %}
+        <tr>
+          <td class="meta-key">Erstellt am:</td>
+          <td class="meta-val">{{ created_at_formatted }}</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- Geräteliste -->
+  <div class="section-title">Übergebene IT-Geräte &amp; Komponenten</div>
+  <table class="items-table">
+    <thead>
+      <tr>
+        <th class="col-pos">Pos.</th>
+        <th class="col-type">Gerätebezeichnung / Typ</th>
+        <th class="col-inv">Inventarnummer</th>
+        <th class="col-sn">Seriennummer</th>
+        <th class="col-qty">Menge</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in note.items %}
+      <tr>
+        <td class="col-pos">{{ loop.index }}</td>
+        <td class="col-type">{{ item.device_type }}</td>
+        <td class="col-inv">{{ item.inventory_number }}</td>
+        <td class="col-sn">{{ item.serial_number or "–" }}</td>
+        <td class="col-qty">{{ item.quantity }}</td>
+      </tr>
+      {% endfor %}
+      <tr class="summary-row">
+        <td colspan="4" style="text-align: right;">Gesamtanzahl übergebener Einheiten ({{ note.items|length }} Positionen):</td>
+        <td class="col-qty">{{ total_quantity }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Hinweise / Notizen -->
+  {% if note.notes %}
+  <div class="notes-box">
+    <div class="notes-title">Hinweise zur Lieferung / Inventarisierung:</div>
+    <div>{{ note.notes }}</div>
+  </div>
+  {% endif %}
+
+  {% if note.handover_notes %}
+  <div class="notes-box" style="background-color: #f0f9ff; border-color: #bae6fd; border-left-color: #0284c7;">
+    <div class="notes-title" style="color: #0369a1;">Bemerkungen bei der Vor-Ort-Übergabe:</div>
+    <div>{{ note.handover_notes }}</div>
+  </div>
+  {% endif %}
+
+  <!-- Übergabe & Unterschrift -->
+  <div class="confirmation-box">
+    <p class="confirmation-text">
+      <strong>Empfangsbestätigung:</strong> Hiermit wird bestätigt, dass die oben aufgeführten IT-Geräte und Zubehörteile am
+      <strong>{{ completed_at_formatted }}</strong> vollständig und ohne äußerlich erkennbare Transportschäden an die Schule
+      (<strong>{{ note.school_name }}</strong>) übergeben wurden.
+    </p>
+    <div class="sig-grid">
+      <div class="sig-col-left">
+        <div class="box-label">Übergeben durch (Schul-IT)</div>
+        <table class="meta-table" style="margin-top: 6px;">
+          <tr>
+            <td class="meta-key">Mitarbeiter/in:</td>
+            <td class="meta-val">{{ note.delivered_by or "–" }}</td>
+          </tr>
+          <tr>
+            <td class="meta-key">Abteilung:</td>
+            <td class="meta-val">Kommunale Schul-IT</td>
+          </tr>
+          <tr>
+            <td class="meta-key">Zeitpunkt:</td>
+            <td class="meta-val">{{ completed_at_formatted }}</td>
+          </tr>
+        </table>
+      </div>
+      <div class="sig-col-right">
+        <div class="box-label">Empfangen &amp; digital quittiert vor Ort</div>
+        <div class="sig-image-box">
+          {% if note.signature_data %}
+          <img src="{{ note.signature_data }}" alt="Digitale Unterschrift">
+          {% else %}
+          <div style="padding-top: 25px; color: #94a3b8; font-style: italic;">Keine Unterschrift hinterlegt</div>
+          {% endif %}
+        </div>
+        <div class="sig-caption">
+          <strong>Angenommen von:</strong> {{ note.received_by or "–" }} ({{ note.school_name }})
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,208 @@
+/* ==========================================================================
+   Digitaler IT-Lieferschein – Custom Styles & Modern Web Guidance Compliance
+   ========================================================================== */
+
+[x-cloak] {
+  display: none !important;
+}
+
+/* 1. Form Controls (Guide: forms)
+   - font: inherit; font-size: max(1rem, 1em) prevents iOS auto-zoom (<16px)
+   - min-height: 48px (52px on coarse pointer) ensures accessible touch targets
+   - :user-invalid highlights errors only after user interaction
+*/
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  font: inherit;
+  font-size: max(1rem, 1em);
+  min-height: 48px;
+  box-sizing: border-box;
+}
+
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  button.touch-btn {
+    min-height: 52px;
+  }
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+}
+
+input:user-invalid,
+select:user-invalid,
+textarea:user-invalid {
+  border-color: #dc2626 !important;
+  background-color: #fef2f2;
+}
+
+/* 2. Native Modal Dialogs (Guide: dialog)
+   - Do not set display unconditionally on dialog; scope with dialog[open]
+   - Contain scroll on dialog:modal and dialog::backdrop instead of body overflow:hidden
+*/
+dialog:modal {
+  overscroll-behavior: contain;
+  border: none;
+  border-radius: 0.875rem;
+  padding: 0;
+  max-width: min(94vw, 44rem);
+  width: 100%;
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.35);
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background-color: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(2px);
+}
+
+/* 3. Responsive Data Table with Container Queries & Sticky Headers (Guide: responsive-table) */
+.table-wrapper {
+  overflow: auto;
+  max-inline-size: 100%;
+  max-block-size: min(680px, 78vh);
+  container-type: inline-size;
+  border-radius: 0.75rem;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+}
+
+.table-wrapper table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.table-wrapper thead {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+}
+
+.table-wrapper tbody th {
+  position: sticky;
+  inset-inline-start: 0;
+  background: #ffffff;
+  z-index: 1;
+}
+
+@container (width < 760px) {
+  .table-wrapper table,
+  .table-wrapper thead,
+  .table-wrapper tbody,
+  .table-wrapper tr,
+  .table-wrapper th,
+  .table-wrapper td {
+    display: block;
+  }
+
+  .table-wrapper thead {
+    /* MANDATORY: Hide column header from layout and screen readers in stacked mode */
+    display: none;
+  }
+
+  .table-wrapper tr {
+    margin-block-end: 1rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 0.625rem;
+    overflow: hidden;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  }
+
+  .table-wrapper tbody th {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 2;
+    background: #f1f5f9;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .table-wrapper td {
+    padding: 0.625rem 1rem;
+    border-bottom: 1px solid #f1f5f9;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    text-align: right;
+  }
+
+  .table-wrapper table {
+    --label-2: "Schule";
+    --label-3: "osTicket";
+    --label-4: "Geräte";
+    --label-5: "Quittiert von";
+    --label-6: "Datum";
+    --label-7: "E-Mail-Status";
+    --label-8: "Aktionen";
+  }
+
+  .table-wrapper td:nth-child(2)::before {
+    content: var(--label-2) ": ";
+    font-weight: 600;
+    color: #475569;
+    text-align: left;
+  }
+  .table-wrapper td:nth-child(3)::before {
+    content: var(--label-3) ": ";
+    font-weight: 600;
+    color: #475569;
+    text-align: left;
+  }
+  .table-wrapper td:nth-child(4)::before {
+    content: var(--label-4) ": ";
+    font-weight: 600;
+    color: #475569;
+    text-align: left;
+  }
+  .table-wrapper td:nth-child(5)::before {
+    content: var(--label-5) ": ";
+    font-weight: 600;
+    color: #475569;
+    text-align: left;
+  }
+  .table-wrapper td:nth-child(6)::before {
+    content: var(--label-6) ": ";
+    font-weight: 600;
+    color: #475569;
+    text-align: left;
+  }
+  .table-wrapper td:nth-child(7)::before {
+    content: var(--label-7) ": ";
+    font-weight: 600;
+    color: #475569;
+    text-align: left;
+  }
+  .table-wrapper td:nth-child(8)::before {
+    content: var(--label-8) ": ";
+    font-weight: 600;
+    color: #475569;
+    text-align: left;
+  }
+}
+
+/* 4. Signature Pad Touch Canvas */
+.signature-canvas-wrapper {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#signature-canvas {
+  touch-action: none;
+  width: 100%;
+  height: 220px;
+  display: block;
+  cursor: crosshair;
+}

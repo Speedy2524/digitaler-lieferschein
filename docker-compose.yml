@@ -1,0 +1,20 @@
+services:
+  digitaler-lieferschein:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/speedy2524/digitaler-lieferschein:latest
+    container_name: digitaler-lieferschein
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATA_DIR=/app/data
+      - DATABASE_URL=sqlite:////app/data/lieferscheine.db
+      - PDF_STORAGE_DIR=/app/data/pdfs
+      - TZ=${TIMEZONE:-Europe/Berlin}
+    volumes:
+      - ./data:/app/data
