@@ -67,7 +67,7 @@ Jeder Lieferschein durchläuft folgende Status:
 Wenn in einem Lieferschein eine **osTicket-Nummer** hinterlegt ist (Eingaben wie `#382814` oder ` 382814 ` werden automatisch auf reine Ziffern `382814` bereinigt) und in der `.env` die Variable `OSTICKET_EMAIL` gesetzt ist, versendet das System beim Abschließen automatisch eine E-Mail mit dem PDF-Anhang und dem exakt für osTicket erforderlichen Betreff:
 
 ```text
-[#382814] Lieferschein LS-2026-0001 - Rauchbeinschule GS
+[#382814] Lieferschein LS-2026-0001 - Musterschule Nord GS
 ```
 
 Dadurch ordnet osTicket das digital unterschriebene Übergabeprotokoll automatisch dem bestehenden Ticket zu.

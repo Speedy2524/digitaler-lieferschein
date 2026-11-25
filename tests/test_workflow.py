@@ -33,7 +33,7 @@ def test_full_two_stage_workflow():
         assert r_schools.status_code == 200
         schools = r_schools.json()
         assert len(schools) >= 3
-        rauchbein = next(s for s in schools if "Rauchbeinschule" in s["name"])
+        musterschule = next(s for s in schools if "Musterschule" in s["name"])
 
         r_staff = client.get("/api/staff")
         assert r_staff.status_code == 200
@@ -42,10 +42,10 @@ def test_full_two_stage_workflow():
 
         # 2. Stufe 1: Neuen Lieferschein als ENTWURF anlegen (inkl. osTicket-Bereinigung von '# 382814 ')
         create_payload = {
-            "school_id": rauchbein["id"],
-            "school_name": rauchbein["name"],
-            "recipient_email": rauchbein["email"],
-            "cc_email": rauchbein["cc_email"],
+            "school_id": musterschule["id"],
+            "school_name": musterschule["name"],
+            "recipient_email": musterschule["email"],
+            "cc_email": musterschule["cc_email"],
             "osticket_number": " # 382814 ",
             "ordered_by": "Fr. Rektorin Müller",
             "room": "Sekretariat EG",
@@ -123,8 +123,8 @@ def test_osticket_subject_format():
     """Prüft das exakt geforderte osTicket-Betreff-Format: [#<TICKETNUMMER>] Lieferschein <LS-NR> - <Schule>"""
     dummy_note = DeliveryNote(
         delivery_number="LS-2026-0001",
-        school_name="Rauchbeinschule GS",
-        recipient_email="sekretariat@rauchbeinschule.schule.local",
+        school_name="Musterschule Nord GS",
+        recipient_email="sekretariat@musterschule-nord.schule.local",
         osticket_number="382814",
         delivered_by="Max Mustermann",
         received_by="Fr. Müller",
@@ -138,11 +138,11 @@ def test_osticket_subject_format():
         )
     ]
     msg = _build_osticket_email(dummy_note, b"%PDF-1.4 dummy", "Lieferschein_LS-2026-0001.pdf")
-    assert msg["Subject"] == "[#382814] Lieferschein LS-2026-0001 - Rauchbeinschule GS"
+    assert msg["Subject"] == "[#382814] Lieferschein LS-2026-0001 - Musterschule Nord GS"
 
     school_msg = _build_school_email(dummy_note, b"%PDF-1.4 dummy", "Lieferschein_LS-2026-0001.pdf")
     assert "LS-2026-0001" in school_msg["Subject"]
-    assert "Rauchbeinschule GS" in school_msg["Subject"]
+    assert "Musterschule Nord GS" in school_msg["Subject"]
 
 
 def test_smtp_fault_tolerance_and_resend(monkeypatch):

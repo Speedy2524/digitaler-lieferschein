@@ -23,7 +23,7 @@ class Settings:
     )
     DEPARTMENT_CONTACT: str = os.getenv(
         "DEPARTMENT_CONTACT",
-        "schul-it@kommune.local | Tel. 07171 / 123-456",
+        "schul-it@kommune.local | Tel. 01234 / 567-890",
     )
     TIMEZONE: str = os.getenv("TIMEZONE", "Europe/Berlin")
 

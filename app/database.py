@@ -59,35 +59,35 @@ def init_db_and_seed() -> None:
         if school_count == 0:
             schools = [
                 School(
-                    name="Rauchbeinschule GS",
-                    short_code="RBS-GS",
-                    email="sekretariat@rauchbeinschule.schule.local",
-                    cc_email="rektorat@rauchbeinschule.schule.local",
-                    address="Rauchbeinstraße 6, 73525 Schwäbisch Gmünd",
+                    name="Musterschule Nord GS",
+                    short_code="MSN-GS",
+                    email="sekretariat@musterschule-nord.schule.local",
+                    cc_email="rektorat@musterschule-nord.schule.local",
+                    address="Schulstraße 12, 12345 Musterstadt",
                     active=True,
                 ),
                 School(
-                    name="Adalbert-Stifter-Realschule",
-                    short_code="ASR",
-                    email="poststelle@asr.schule.local",
-                    cc_email="it-beauftragter@asr.schule.local",
-                    address="Heidenheimer Straße 19, 73529 Schwäbisch Gmünd",
+                    name="Friedrich-Schiller-Realschule",
+                    short_code="FSR",
+                    email="poststelle@fsr.schule.local",
+                    cc_email="it-beauftragter@fsr.schule.local",
+                    address="Schillerplatz 4, 12345 Musterstadt",
                     active=True,
                 ),
                 School(
-                    name="Parler-Gymnasium",
-                    short_code="PG",
-                    email="sekretariat@parler-gymnasium.schule.local",
+                    name="Goethe-Gymnasium",
+                    short_code="GG",
+                    email="sekretariat@goethe-gymnasium.schule.local",
                     cc_email="",
-                    address="Haußmannstraße 34, 73525 Schwäbisch Gmünd",
+                    address="Goetheallee 20, 12345 Musterstadt",
                     active=True,
                 ),
                 School(
-                    name="Uhlandschule Grund- und Werkrealschule",
-                    short_code="UHS",
-                    email="sekretariat@uhlandschule.schule.local",
+                    name="Pestalozzischule Grund- und Werkrealschule",
+                    short_code="PS-GWRS",
+                    email="sekretariat@pestalozzischule.schule.local",
                     cc_email="",
-                    address="Uhlandstraße 15, 73529 Schwäbisch Gmünd",
+                    address="Pestalozzistraße 8, 12345 Musterstadt",
                     active=True,
                 ),
             ]
@@ -120,8 +120,8 @@ def init_db_and_seed() -> None:
 
         # Falls noch gar keine Lieferscheine existieren, 2 realistische Beispiel-Lieferscheine anlegen
         if db.query(DeliveryNote).count() == 0:
-            rbs = db.query(School).filter(School.name == "Rauchbeinschule GS").first()
-            asr = db.query(School).filter(School.name == "Adalbert-Stifter-Realschule").first()
+            rbs = db.query(School).filter(School.name == "Musterschule Nord GS").first()
+            asr = db.query(School).filter(School.name == "Friedrich-Schiller-Realschule").first()
             year = datetime.now().year
 
             if rbs:
