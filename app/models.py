@@ -144,6 +144,8 @@ class DeliveryItem(Base):
     device_type = Column(String(250), nullable=False)
     inventory_number = Column(String(120), nullable=False, index=True)
     serial_number = Column(String(150), nullable=True)
+    supplier = Column(String(150), nullable=True)
+    invoice_number = Column(String(100), nullable=True)
     quantity = Column(Integer, nullable=False, default=1)
 
     delivery_note = relationship("DeliveryNote", back_populates="items")

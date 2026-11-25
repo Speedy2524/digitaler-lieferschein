@@ -13,7 +13,7 @@
   <!-- Alpine.js -->
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
   <!-- Custom Styles -->
-  <link rel="stylesheet" href="/static/styles.css?v=20261125-3">
+  <link rel="stylesheet" href="/static/styles.css?v=20261125-4">
 </head>
 <body class="min-h-screen flex flex-col antialiased" x-data="deliveryApp()" x-init="init()">
 
@@ -920,7 +920,7 @@
                       02 // REFERENZDATEN &amp; OSTICKET (OPTIONAL)
                     </legend>
 
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-1">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-1">
                       <div>
                         <label for="prep-osticket" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
                           osTicket-Nummer (nur Ziffern)
@@ -966,34 +966,6 @@
                                placeholder="z. B. EDV-Raum 2.04 oder Sekretariat"
                                class="w-full border border-zinc-300 bg-white px-3 py-2 text-zinc-900">
                       </div>
-
-                      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label for="prep-supplier" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
-                            Lieferant
-                          </label>
-                          <input type="text"
-                                 id="prep-supplier"
-                                 name="supplier"
-                                 x-model="form.supplier"
-                                 placeholder="z. B. Bechtle / Cancom"
-                                 class="w-full border border-zinc-300 bg-white px-3 py-2 text-zinc-900">
-                        </div>
-                        <div>
-                          <label for="prep-invoice" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
-                            Rechnungs-Nr.
-                          </label>
-                          <input type="text"
-                                 id="prep-invoice"
-                                 name="invoice_number"
-                                 x-model="form.invoice_number"
-                                 autocorrect="off"
-                                 autocapitalize="none"
-                                 spellcheck="false"
-                                 placeholder="RE-2026-..."
-                                 class="w-full border border-zinc-300 bg-white px-3 py-2 font-mono text-zinc-900">
-                        </div>
-                      </div>
                     </div>
                   </fieldset>
 
@@ -1013,7 +985,7 @@
                                       x-show="index > 0"
                                       @click="duplicateItemTypeFromAbove(index)"
                                       class="font-mono text-xs font-semibold text-sky-700 hover:underline">
-                                [↑ TYP VON POS <span x-text="String(index).padStart(3, '0')"></span> ÜBERNEHMEN]
+                                [↑ TYP &amp; BESTELLDATEN VON POS <span x-text="String(index).padStart(3, '0')"></span> ÜBERNEHMEN]
                               </button>
                               <button type="button"
                                       @click="removeItemRow(index)"
@@ -1071,7 +1043,7 @@
 
                             <div class="sm:col-span-3">
                               <label :for="'item-sn-' + index" class="block text-[11px] font-mono font-bold uppercase text-zinc-600 mb-1">
-                                Seriennummer
+                                Seriennummer (optional)
                               </label>
                               <div class="flex gap-1">
                                 <input type="text"
@@ -1109,6 +1081,34 @@
                                      max="9999"
                                      required
                                      class="w-full border border-zinc-300 bg-white px-2 py-1.5 text-sm font-mono text-center font-bold text-zinc-900">
+                            </div>
+
+                            <!-- Zweite Zeile pro Gerät: Lieferant & Rechnungs-Nr. (optional je Bestellung/Gerät) -->
+                            <div class="sm:col-span-6">
+                              <label :for="'item-supplier-' + index" class="block text-[11px] font-mono font-bold uppercase text-zinc-500 mb-1">
+                                Lieferant (optional)
+                              </label>
+                              <input type="text"
+                                     :id="'item-supplier-' + index"
+                                     :name="'item_supplier_' + index"
+                                     x-model="item.supplier"
+                                     placeholder="z. B. Bechtle / Cancom"
+                                     class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-xs sm:text-sm text-zinc-900">
+                            </div>
+
+                            <div class="sm:col-span-6">
+                              <label :for="'item-invoice-' + index" class="block text-[11px] font-mono font-bold uppercase text-zinc-500 mb-1">
+                                Rechnungs-Nr. / Bestellung (optional)
+                              </label>
+                              <input type="text"
+                                     :id="'item-invoice-' + index"
+                                     :name="'item_invoice_' + index"
+                                     x-model="item.invoice_number"
+                                     autocorrect="off"
+                                     autocapitalize="none"
+                                     spellcheck="false"
+                                     placeholder="RE-2026-..."
+                                     class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-xs sm:text-sm font-mono text-zinc-900">
                             </div>
                           </div>
                         </div>
@@ -2320,6 +2320,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20261125-3"></script>
+  <script src="/static/app.js?v=20261125-4"></script>
 </body>
 </html>

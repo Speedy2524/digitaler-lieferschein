@@ -156,7 +156,14 @@ function deliveryApp() {
       notes: "",
       status: "BEREIT",
       items: [
-        { device_type: "", inventory_number: "", serial_number: "", quantity: 1 },
+        {
+          device_type: "",
+          inventory_number: "",
+          serial_number: "",
+          supplier: "",
+          invoice_number: "",
+          quantity: 1,
+        },
       ],
     },
 
@@ -723,6 +730,8 @@ function deliveryApp() {
         device_type: "",
         inventory_number: "",
         serial_number: "",
+        supplier: "",
+        invoice_number: "",
         quantity: 1,
       });
       this.$nextTick(() => {
@@ -734,7 +743,10 @@ function deliveryApp() {
 
     duplicateItemTypeFromAbove(index) {
       if (index > 0 && this.form.items[index - 1]) {
-        this.form.items[index].device_type = this.form.items[index - 1].device_type;
+        const prev = this.form.items[index - 1];
+        this.form.items[index].device_type = prev.device_type;
+        this.form.items[index].supplier = prev.supplier || "";
+        this.form.items[index].invoice_number = prev.invoice_number || "";
         this.$nextTick(() => {
           const invInput = document.getElementById(`item-inv-${index}`);
           if (invInput) invInput.focus();
@@ -744,7 +756,14 @@ function deliveryApp() {
 
     removeItemRow(index) {
       if (this.form.items.length <= 1) {
-        this.form.items[0] = { device_type: "", inventory_number: "", serial_number: "", quantity: 1 };
+        this.form.items[0] = {
+          device_type: "",
+          inventory_number: "",
+          serial_number: "",
+          supplier: "",
+          invoice_number: "",
+          quantity: 1,
+        };
         return;
       }
       this.form.items.splice(index, 1);
@@ -764,16 +783,18 @@ function deliveryApp() {
         if (sn) sn.focus();
       } else if (field === "serial_number") {
         if (index === this.form.items.length - 1) {
-          const currentType = this.form.items[index].device_type;
+          const current = this.form.items[index];
           this.form.items.push({
-            device_type: currentType,
+            device_type: current.device_type,
             inventory_number: "",
             serial_number: "",
+            supplier: current.supplier || "",
+            invoice_number: current.invoice_number || "",
             quantity: 1,
           });
           this.$nextTick(() => {
             const nextIndex = index + 1;
-            const targetId = currentType ? `item-inv-${nextIndex}` : `item-type-${nextIndex}`;
+            const targetId = current.device_type ? `item-inv-${nextIndex}` : `item-type-${nextIndex}`;
             const nextEl = document.getElementById(targetId);
             if (nextEl) nextEl.focus();
           });
@@ -807,9 +828,20 @@ function deliveryApp() {
                 device_type: i.device_type,
                 inventory_number: i.inventory_number,
                 serial_number: i.serial_number || "",
+                supplier: i.supplier || note.supplier || "",
+                invoice_number: i.invoice_number || note.invoice_number || "",
                 quantity: i.quantity || 1,
               }))
-            : [{ device_type: "", inventory_number: "", serial_number: "", quantity: 1 }],
+            : [
+                {
+                  device_type: "",
+                  inventory_number: "",
+                  serial_number: "",
+                  supplier: "",
+                  invoice_number: "",
+                  quantity: 1,
+                },
+              ],
       };
       this.switchTab("prepare");
     },
@@ -859,6 +891,8 @@ function deliveryApp() {
             device_type: i.device_type.trim(),
             inventory_number: i.inventory_number.trim(),
             serial_number: i.serial_number ? i.serial_number.trim() : null,
+            supplier: i.supplier ? i.supplier.trim() : null,
+            invoice_number: i.invoice_number ? i.invoice_number.trim() : null,
             quantity: Number(i.quantity) || 1,
           })),
         };

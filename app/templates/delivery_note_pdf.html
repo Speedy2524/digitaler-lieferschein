@@ -434,7 +434,16 @@
       {% for item in note.items %}
       <tr>
         <td class="col-pos">{{ loop.index }}</td>
-        <td class="col-type">{{ item.device_type }}</td>
+        <td class="col-type">
+          <div>{{ item.device_type }}</div>
+          {% if item.supplier or item.invoice_number %}
+          <div style="font-size: 7.5pt; color: #64748b; margin-top: 2px;">
+            {% if item.supplier %}Lieferant: {{ item.supplier }}{% endif %}
+            {% if item.supplier and item.invoice_number %} · {% endif %}
+            {% if item.invoice_number %}Rechnung: {{ item.invoice_number }}{% endif %}
+          </div>
+          {% endif %}
+        </td>
         <td class="col-inv">{{ item.inventory_number }}</td>
         <td class="col-sn">{{ item.serial_number or "–" }}</td>
         <td class="col-qty">{{ item.quantity }}</td>

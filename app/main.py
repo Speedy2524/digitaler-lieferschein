@@ -749,6 +749,8 @@ def list_delivery_notes(
                 DeliveryItem.inventory_number.ilike(term),
                 DeliveryItem.serial_number.ilike(term),
                 DeliveryItem.device_type.ilike(term),
+                DeliveryItem.supplier.ilike(term),
+                DeliveryItem.invoice_number.ilike(term),
             )
         )
         query = query.filter(
@@ -822,6 +824,8 @@ def create_delivery_note(payload: DeliveryNoteSaveRequest, db: Session = Depends
                 device_type=item_in.device_type,
                 inventory_number=item_in.inventory_number,
                 serial_number=item_in.serial_number,
+                supplier=item_in.supplier,
+                invoice_number=item_in.invoice_number,
                 quantity=item_in.quantity,
             )
         )
@@ -877,6 +881,8 @@ def update_delivery_note(note_id: int, payload: DeliveryNoteSaveRequest, db: Ses
                 device_type=item_in.device_type,
                 inventory_number=item_in.inventory_number,
                 serial_number=item_in.serial_number,
+                supplier=item_in.supplier,
+                invoice_number=item_in.invoice_number,
                 quantity=item_in.quantity,
             )
         )

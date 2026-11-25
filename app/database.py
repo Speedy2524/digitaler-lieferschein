@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
@@ -92,10 +92,19 @@ def generate_next_delivery_number(db: Session, year: int | None = None) -> str:
 
 
 def init_db_and_seed() -> None:
-    """Erstellt Tabellen und legt initiale Beispiel-Stammdaten an, falls die DB leer ist."""
+    """Erstellt Tabellen, führt sanfte Spalten-Migrationen durch und legt initiale Stammdaten an."""
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
+        # 0. Sanfte Migration für bestehende SQLite-DBs (supplier & invoice_number an delivery_items)
+        if settings.DATABASE_URL.startswith("sqlite"):
+            cols = [row[1] for row in db.execute(text("PRAGMA table_info(delivery_items)")).fetchall()]
+            if "supplier" not in cols:
+                db.execute(text("ALTER TABLE delivery_items ADD COLUMN supplier VARCHAR(150)"))
+            if "invoice_number" not in cols:
+                db.execute(text("ALTER TABLE delivery_items ADD COLUMN invoice_number VARCHAR(100)"))
+            db.commit()
+
         # 1. Initiale System-Settings in DB anlegen, falls noch nicht vorhanden
         existing_keys = {row.key for row in db.query(SystemSetting).all()}
         for k, v in DEFAULT_SYSTEM_SETTINGS.items():
@@ -199,6 +208,8 @@ def init_db_and_seed() -> None:
                         device_type="Apple iPad 10. Gen 64GB Wi-Fi inkl. Rugged Case",
                         inventory_number="INV-2026-1041",
                         serial_number="DLXQT98A11",
+                        supplier="Bechtle Logistik & Service GmbH",
+                        invoice_number="RE-2026-88412",
                         quantity=1,
                     ),
                     DeliveryItem(
@@ -207,6 +218,8 @@ def init_db_and_seed() -> None:
                         device_type="Apple iPad 10. Gen 64GB Wi-Fi inkl. Rugged Case",
                         inventory_number="INV-2026-1042",
                         serial_number="DLXQT98A12",
+                        supplier="Bechtle Logistik & Service GmbH",
+                        invoice_number="RE-2026-88412",
                         quantity=1,
                     ),
                     DeliveryItem(
@@ -215,6 +228,8 @@ def init_db_and_seed() -> None:
                         device_type="Apple Pencil (USB-C)",
                         inventory_number="INV-2026-1043",
                         serial_number="GQF882190A",
+                        supplier="Cancom GmbH",
+                        invoice_number="CN-994105",
                         quantity=2,
                     ),
                 ])
@@ -230,8 +245,6 @@ def init_db_and_seed() -> None:
                     osticket_number="382905",
                     ordered_by="Hr. Kienzle (IT-Beauftragter)",
                     room="EDV-Raum 2.04",
-                    supplier="Cancom GmbH",
-                    invoice_number="CN-994210",
                     notes="Austauschgerät für defekten Lehrer-PC. Altgerät bitte zur Abholung mitnehmen.",
                 )
                 db.add(note2)
@@ -243,6 +256,8 @@ def init_db_and_seed() -> None:
                         device_type="HP Elite Mini 800 G9 (i5 / 16GB / 512GB SSD)",
                         inventory_number="INV-2026-2190",
                         serial_number="CZC41892KL",
+                        supplier="Cancom GmbH",
+                        invoice_number="CN-994210",
                         quantity=1,
                     ),
                     DeliveryItem(
@@ -251,6 +266,8 @@ def init_db_and_seed() -> None:
                         device_type="HP E24 G5 24-Zoll IPS-Monitor",
                         inventory_number="INV-2026-2191",
                         serial_number="CNC411087P",
+                        supplier="Cancom GmbH",
+                        invoice_number="CN-994210",
                         quantity=1,
                     ),
                 ])

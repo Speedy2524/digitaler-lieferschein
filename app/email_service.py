@@ -100,7 +100,10 @@ def _build_school_email(
     completed_str = format_dt_german(note.completed_at)
     items_lines = "\n".join(
         f"  - {item.quantity}x {item.device_type} (Inventar-Nr.: {item.inventory_number}"
-        + (f", S/N: {item.serial_number})" if item.serial_number else ")")
+        + (f", S/N: {item.serial_number}" if item.serial_number else "")
+        + (f", Lieferant: {item.supplier}" if item.supplier else "")
+        + (f", Rechnung: {item.invoice_number}" if item.invoice_number else "")
+        + ")"
         for item in note.items
     )
 

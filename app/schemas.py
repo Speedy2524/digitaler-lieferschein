@@ -183,6 +183,8 @@ class DeliveryItemInput(BaseModel):
     device_type: str = Field(..., min_length=1, max_length=250)
     inventory_number: str = Field(..., min_length=1, max_length=120)
     serial_number: str | None = Field(default=None, max_length=150)
+    supplier: str | None = Field(default=None, max_length=150)
+    invoice_number: str | None = Field(default=None, max_length=100)
     quantity: int = Field(default=1, ge=1, le=9999)
 
     @field_validator("device_type", "inventory_number")
@@ -193,7 +195,7 @@ class DeliveryItemInput(BaseModel):
             raise ValueError("Gerätebezeichnung und Inventarnummer sind Pflichtfelder.")
         return v
 
-    @field_validator("serial_number")
+    @field_validator("serial_number", "supplier", "invoice_number")
     @classmethod
     def strip_optional(cls, v: str | None) -> str | None:
         if v is None:
