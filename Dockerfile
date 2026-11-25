@@ -27,12 +27,16 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY app ./app
 
-# Persistente Verzeichnisse für SQLite-DB und generierte PDFs vorbereiten
-RUN mkdir -p /app/data/pdfs
+# Nicht-privilegierten Benutzer + Datenverzeichnis vorbereiten
+RUN groupadd --gid 1000 appuser \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin appuser \
+    && mkdir -p /app/data/pdfs \
+    && chown -R appuser:appuser /app \
+    && chmod 700 /app/data
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "mkdir -p /app/data/pdfs && chown -R 1000:1000 /app/data && chmod 700 /app/data && exec setpriv --reuid=1000 --regid=1000 --clear-groups uvicorn app.main:app --host 0.0.0.0 --port 8000"]

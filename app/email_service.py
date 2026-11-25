@@ -11,9 +11,17 @@ from app.pdf_service import format_dt_german
 
 logger = logging.getLogger(__name__)
 
+_PLACEHOLDER_HOSTS = {"mail.kommune.local"}
+_PLACEHOLDER_EMAILS = {"tickets@kommune.local", "schul-it@kommune.local"}
+
+
+def _clean_header_text(val: str) -> str:
+    return val.replace("\r", " ").replace("\n", " ").strip()
+
 
 def _resolve_cfg(cfg: dict[str, str] | None = None) -> dict[str, str]:
     base = {
+        "app_title": settings.APP_TITLE,
         "department_name": settings.DEPARTMENT_NAME,
         "department_contact": settings.DEPARTMENT_CONTACT,
         "smtp_enabled": "true" if settings.SMTP_ENABLED else "false",
@@ -32,7 +40,25 @@ def _resolve_cfg(cfg: dict[str, str] | None = None) -> dict[str, str]:
         for k, v in cfg.items():
             if v is not None:
                 base[k] = str(v)
+
+    if base["smtp_host"].strip().lower() in _PLACEHOLDER_HOSTS:
+        base["smtp_host"] = ""
+    if base["smtp_from_email"].strip().lower() in _PLACEHOLDER_EMAILS:
+        base["smtp_from_email"] = ""
+    if base["osticket_email"].strip().lower() in _PLACEHOLDER_EMAILS:
+        base["osticket_email"] = ""
     return base
+
+
+def _get_sender(c: dict[str, str], allow_placeholder: bool = False) -> tuple[str, str]:
+    from_email = _clean_header_text(c.get("smtp_from_email") or "")
+    from_name = _clean_header_text(c.get("smtp_from_name") or "") or "Schul-IT Lieferschein-System"
+    if not from_email:
+        if allow_placeholder:
+            from_email = "noreply@example.invalid"
+        else:
+            raise ValueError("Keine Absender-E-Mail-Adresse (SMTP_FROM_EMAIL) im Konfigmenü hinterlegt.")
+    return from_name, from_email
 
 
 def _send_raw_email(msg: EmailMessage, cfg: dict[str, str] | None = None) -> None:
@@ -72,29 +98,35 @@ def _build_school_email(
     pdf_bytes: bytes,
     pdf_filename: str,
     cfg: dict[str, str] | None = None,
+    allow_placeholder_from: bool = True,
 ) -> EmailMessage:
     c = _resolve_cfg(cfg)
-    from_email = (c.get("smtp_from_email") or settings.SMTP_FROM_EMAIL).strip() or "schul-it@kommune.local"
-    from_name = (c.get("smtp_from_name") or settings.SMTP_FROM_NAME).strip() or "Schul-IT Lieferschein-System"
-    global_cc = (c.get("global_archive_cc_email") or "").strip()
+    from_name, from_email = _get_sender(c, allow_placeholder=allow_placeholder_from)
+    global_cc = _clean_header_text(c.get("global_archive_cc_email") or "")
     dept_name = c.get("department_name") or settings.DEPARTMENT_NAME
     dept_contact = c.get("department_contact") or settings.DEPARTMENT_CONTACT
 
     msg = EmailMessage()
     msg["From"] = formataddr((from_name, from_email))
-    msg["To"] = note.recipient_email
+    msg["To"] = _clean_header_text(note.recipient_email)
 
     cc_list: list[str] = []
     if note.cc_email and note.cc_email.strip():
-        cc_list.append(note.cc_email.strip())
-    if global_cc and global_cc not in cc_list:
-        cc_list.append(global_cc)
+        for part in note.cc_email.split(","):
+            p = _clean_header_text(part)
+            if p and p not in cc_list:
+                cc_list.append(p)
+    if global_cc:
+        for part in global_cc.split(","):
+            p = _clean_header_text(part)
+            if p and p not in cc_list:
+                cc_list.append(p)
     if cc_list:
         msg["Cc"] = ", ".join(cc_list)
 
-    subject = f"IT-Lieferschein {note.delivery_number} – {note.school_name}"
+    subject = f"IT-Lieferschein {_clean_header_text(note.delivery_number)} – {_clean_header_text(note.school_name)}"
     if note.osticket_number:
-        subject += f" (Ticket #{note.osticket_number})"
+        subject += f" (Ticket #{_clean_header_text(note.osticket_number)})"
     msg["Subject"] = subject
 
     completed_str = format_dt_german(note.completed_at)
@@ -158,25 +190,30 @@ def _build_osticket_email(
     pdf_bytes: bytes,
     pdf_filename: str,
     cfg: dict[str, str] | None = None,
+    allow_placeholder_from: bool = True,
 ) -> EmailMessage:
     """
     Erzeugt die E-Mail an osTicket mit dem zwingend erforderlichen Betreff-Format:
     [#<TICKETNUMMER>] Lieferschein <LS-NR> - <Schule>
     """
     c = _resolve_cfg(cfg)
-    from_email = (c.get("smtp_from_email") or settings.SMTP_FROM_EMAIL).strip() or "schul-it@kommune.local"
-    from_name = (c.get("smtp_from_name") or settings.SMTP_FROM_NAME).strip() or "Schul-IT Lieferschein-System"
-    osticket_to = (c.get("osticket_email") or settings.OSTICKET_EMAIL).strip()
+    from_name, from_email = _get_sender(c, allow_placeholder=allow_placeholder_from)
+    osticket_to = _clean_header_text(c.get("osticket_email") or "")
 
     msg = EmailMessage()
     msg["From"] = formataddr((from_name, from_email))
     msg["To"] = osticket_to
-    msg["Subject"] = f"[#{note.osticket_number}] Lieferschein {note.delivery_number} - {note.school_name}"
+    msg["Subject"] = (
+        f"[#{_clean_header_text(note.osticket_number or '')}] "
+        f"Lieferschein {_clean_header_text(note.delivery_number)} - {_clean_header_text(note.school_name)}"
+    )
 
     completed_str = format_dt_german(note.completed_at)
     items_lines = "\n".join(
         f"  * {item.quantity}x {item.device_type} | Inv.-Nr.: {item.inventory_number}"
         + (f" | S/N: {item.serial_number}" if item.serial_number else "")
+        + (f" | Lieferant: {item.supplier}" if item.supplier else "")
+        + (f" | Rechnung: {item.invoice_number}" if item.invoice_number else "")
         for item in note.items
     )
 
@@ -209,14 +246,13 @@ def _build_osticket_email(
 def send_test_email(recipient_email: str, cfg: dict[str, str] | None = None) -> dict[str, str]:
     """Sendet eine Test-E-Mail über die aktuell gespeicherte SMTP-Konfiguration."""
     c = _resolve_cfg(cfg)
-    from_email = (c.get("smtp_from_email") or "").strip() or "schul-it@kommune.local"
-    from_name = (c.get("smtp_from_name") or "").strip() or "Schul-IT Lieferschein-System"
+    from_name, from_email = _get_sender(c, allow_placeholder=False)
     dept_name = c.get("department_name") or settings.DEPARTMENT_NAME
 
     msg = EmailMessage()
     msg["From"] = formataddr((from_name, from_email))
-    msg["To"] = recipient_email.strip()
-    msg["Subject"] = f"SMTP-Testmail – {c.get('app_title', 'Digitaler IT-Lieferschein')}"
+    msg["To"] = _clean_header_text(recipient_email)
+    msg["Subject"] = f"SMTP-Testmail – {_clean_header_text(c.get('app_title', 'Digitaler IT-Lieferschein'))}"
     msg.set_content(
         f"Guten Tag,\n\n"
         f"dies ist eine automatische Test-E-Mail der Anwendung '{c.get('app_title', 'Digitaler IT-Lieferschein')}'.\n"
@@ -239,9 +275,9 @@ def dispatch_delivery_note_emails(
     sowie – falls eine osTicket-Nummer hinterlegt ist – die Zuordnungs-E-Mail an osTicket.
     """
     c = _resolve_cfg(cfg)
-    smtp_is_enabled = c.get("smtp_enabled", "false").lower() == "true" or settings.SMTP_ENABLED
+    smtp_is_enabled = c.get("smtp_enabled", "false").lower() == "true" and bool((c.get("smtp_host") or "").strip())
     osticket_email = (c.get("osticket_email") or "").strip()
-    osticket_is_enabled = c.get("osticket_enabled", "false").lower() == "true" or bool(osticket_email)
+    osticket_is_enabled = c.get("osticket_enabled", "false").lower() == "true" and bool(osticket_email)
 
     pdf_bytes = pdf_path.read_bytes()
     pdf_filename = pdf_path.name
@@ -249,7 +285,13 @@ def dispatch_delivery_note_emails(
 
     # 1. E-Mail an das Schulsekretariat
     try:
-        school_msg = _build_school_email(note, pdf_bytes, pdf_filename, cfg=c)
+        school_msg = _build_school_email(
+            note,
+            pdf_bytes,
+            pdf_filename,
+            cfg=c,
+            allow_placeholder_from=not smtp_is_enabled,
+        )
         if smtp_is_enabled:
             _send_raw_email(school_msg, cfg=c)
             note.email_school_status = "VERSENDET"
@@ -279,7 +321,13 @@ def dispatch_delivery_note_emails(
         return
 
     try:
-        osticket_msg = _build_osticket_email(note, pdf_bytes, pdf_filename, cfg=c)
+        osticket_msg = _build_osticket_email(
+            note,
+            pdf_bytes,
+            pdf_filename,
+            cfg=c,
+            allow_placeholder_from=not smtp_is_enabled,
+        )
         if smtp_is_enabled:
             _send_raw_email(osticket_msg, cfg=c)
             note.email_osticket_status = "VERSENDET"

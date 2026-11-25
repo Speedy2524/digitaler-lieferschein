@@ -4,16 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Digitaler IT-Lieferschein – Kommunale Schul-IT</title>
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Signature Pad (Touch / Apple Pencil optimiert) -->
-  <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js"></script>
-  <!-- HTML5-QRCode (Kamera Barcode-/QR-Scanner) -->
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-  <!-- Alpine.js -->
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
+  <!-- Lokale Frontend-Bibliotheken (ohne externe CDNs) -->
+  <script src="/static/vendor/tailwindcss.min.js?v=20261125-6"></script>
+  <script src="/static/vendor/signature_pad.umd.min.js?v=20261125-6"></script>
+  <script src="/static/vendor/html5-qrcode.min.js?v=20261125-6"></script>
+  <script defer src="/static/vendor/alpine.min.js?v=20261125-6"></script>
   <!-- Custom Styles -->
-  <link rel="stylesheet" href="/static/styles.css?v=20261125-5">
+  <link rel="stylesheet" href="/static/styles.css?v=20261125-6">
 </head>
 <body class="min-h-screen flex flex-col antialiased" x-data="deliveryApp()" x-init="init()">
 
@@ -116,9 +114,9 @@
                      name="password"
                      x-model="setupForm.password"
                      required
-                     minlength="4"
+                     minlength="8"
                      autocomplete="new-password"
-                     placeholder="Mind. 4 Zeichen"
+                     placeholder="Mind. 8 Zeichen"
                      class="w-full border border-zinc-300 px-3 py-2 text-sm">
             </div>
             <div>
@@ -129,11 +127,12 @@
                      id="setup-pin"
                      name="pin"
                      x-model="setupForm.pin"
+                     minlength="4"
                      inputmode="numeric"
                      autocorrect="off"
                      autocapitalize="none"
                      spellcheck="false"
-                     placeholder="z. B. 4–6 Ziffern"
+                     placeholder="Mind. 4 Ziffern"
                      class="w-full border border-zinc-300 px-3 py-2 text-sm font-mono">
             </div>
           </div>
@@ -192,40 +191,28 @@
         <div x-show="loginError" role="alert" class="mb-4 p-3 bg-red-50 border-l-4 border-red-600 text-xs font-semibold text-red-900" x-text="loginError"></div>
 
         <form @submit.prevent="submitLogin()" action="/api/auth/login" method="POST" aria-labelledby="login-screen-heading" class="space-y-4">
-          <!-- Schnellauswahl der Benutzer (besonders praktisch auf dem iPad) -->
-          <div x-show="loginUsers.length > 0">
-            <span class="block text-[11px] font-mono font-bold uppercase text-zinc-500 mb-1.5">
-              Konto antippen oder Benutzername unten eingeben:
-            </span>
-            <div class="flex flex-wrap gap-1.5">
-              <template x-for="lu in loginUsers" :key="lu.username">
-                <button type="button"
-                        @click="loginUsername = lu.username; document.getElementById('login-secret-input')?.focus()"
-                        class="px-2.5 py-1.5 text-xs font-mono border transition"
-                        :class="loginUsername.toLowerCase() === lu.username.toLowerCase()
-                          ? 'bg-zinc-900 text-white border-zinc-900 font-bold'
-                          : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800 border-zinc-300'">
-                  <span x-text="lu.full_name"></span>
-                  <span class="opacity-70" x-text="'(' + lu.username + ')'"></span>
-                </button>
-              </template>
-            </div>
-          </div>
-
           <div>
-            <label for="login-username-input" class="block text-xs font-mono font-bold uppercase text-zinc-700 mb-1">
-              Benutzername <span x-show="loginMode === 'password'" class="text-red-600" aria-hidden="true">*</span>
-              <span x-show="loginMode === 'pin'" class="text-zinc-500 font-normal">(oder oben Konto antippen)</span>
-            </label>
+            <div class="flex items-center justify-between mb-1">
+              <label for="login-username-input" class="block text-xs font-mono font-bold uppercase text-zinc-700">
+                Benutzername oder E-Mail <span class="text-red-600" aria-hidden="true">*</span>
+              </label>
+              <button type="button"
+                      x-show="loginUsername"
+                      @click="loginUsername = ''; localStorage.removeItem('it_ls_last_username'); document.getElementById('login-username-input')?.focus()"
+                      class="text-[11px] font-mono text-zinc-500 hover:text-zinc-900 underline">
+                Anderer Benutzer
+              </button>
+            </div>
             <input type="text"
                    id="login-username-input"
                    name="username"
                    x-model="loginUsername"
+                   required
                    autocomplete="username"
                    autocorrect="off"
                    autocapitalize="none"
                    spellcheck="false"
-                   placeholder="z. B. admin_biedenbacher oder Name"
+                   placeholder="z. B. admin_biedenbacher oder E-Mail"
                    class="w-full border border-zinc-300 px-3.5 py-2.5 text-sm font-mono text-zinc-900">
           </div>
 
@@ -239,6 +226,7 @@
                    x-model="loginPin"
                    :inputmode="loginMode === 'pin' ? 'numeric' : 'text'"
                    required
+                   minlength="4"
                    autocomplete="current-password"
                    :placeholder="loginMode === 'password' ? 'Passwort oder PIN eingeben' : 'PIN eingeben'"
                    class="w-full border border-zinc-300 px-3.5 py-2.5 text-sm font-mono text-zinc-900">
@@ -323,6 +311,12 @@
             <span x-show="currentUser" class="hidden sm:inline-block text-xs font-mono opacity-85 px-2"
                   x-text="currentUser?.full_name"></span>
 
+            <button type="button" x-show="!currentUser && !authEnabled" @click="openAdminLoginModal()"
+                    class="text-xs px-2.5 py-1.5 rounded border opacity-85 hover:opacity-100"
+                    style="min-height: 34px;">
+              Admin-Login
+            </button>
+
             <button type="button" x-show="currentUser" @click="logout()"
                     class="text-xs px-2.5 py-1.5 rounded border opacity-80 hover:opacity-100"
                     style="min-height: 34px;">
@@ -384,7 +378,7 @@
           </button>
 
           <button type="button"
-                  x-show="!currentUser || currentUser.role === 'admin'"
+                  x-show="currentUser && currentUser.role === 'admin'"
                   @click="switchTab('settings')"
                   :aria-current="activeTab === 'settings' ? 'page' : null"
                   class="flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold border-b-2 whitespace-nowrap transition"
@@ -438,6 +432,15 @@
               LOGOUT
             </button>
           </div>
+          <div x-show="!currentUser && !authEnabled" class="px-4 py-2.5 bg-zinc-900/90 border-b border-zinc-800 flex items-center justify-between gap-2">
+            <div class="font-mono text-[10px] uppercase text-zinc-400">
+              MODUS // <span class="text-amber-400 font-bold">KIOSK</span>
+            </div>
+            <button type="button" @click="openAdminLoginModal()"
+                    class="font-mono text-[11px] text-sky-300 hover:text-white px-2 py-1 border border-zinc-700 bg-zinc-800">
+              ADMIN LOGIN
+            </button>
+          </div>
 
           <!-- ERP-Navigationsmenü -->
           <nav aria-label="ERP Navigation" class="p-2 flex lg:flex-col overflow-x-auto gap-1">
@@ -473,7 +476,7 @@
             </button>
 
             <button type="button"
-                    x-show="!currentUser || currentUser.role === 'admin'"
+                    x-show="currentUser && currentUser.role === 'admin'"
                     @click="switchTab('settings')"
                     class="w-full text-left px-3 py-2.5 text-xs font-mono flex items-center justify-between gap-2 transition whitespace-nowrap"
                     :class="activeTab === 'settings' ? 'bg-zinc-800 text-white font-bold border-l-2 border-sky-400' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'">
@@ -1298,7 +1301,7 @@
                 <div class="p-3.5 border border-zinc-300 bg-zinc-50">
                   <p class="font-mono text-xs font-bold uppercase text-zinc-500 mb-1">2. Automatische osTicket-Zuordnung</p>
                   <p class="text-sm font-medium text-zinc-900 mb-2"
-                     x-text="completedResultNote?.osticket_number ? ('Ticket #' + completedResultNote.osticket_number + ' (' + (osticketEmail || 'nicht konfiguriert') + ')') : 'Keine osTicket-Nr. hinterlegt'"></p>
+                     x-text="completedResultNote?.osticket_number ? ('Ticket #' + completedResultNote.osticket_number + ' (' + (osticketConfigured ? (osticketEmail || 'aktiviert') : 'nicht konfiguriert') + ')') : 'Keine osTicket-Nr. hinterlegt'"></p>
                   <span class="inline-block font-mono text-xs font-bold px-2 py-0.5 border"
                         :class="emailBadgeClass(completedResultNote?.email_osticket_status)"
                         x-text="emailStatusLabel(completedResultNote?.email_osticket_status)"></span>
@@ -1819,7 +1822,7 @@
         <!-- ===============================================================
              TAB 5: KONFIGMENÜ & LOKALE BENUTZERVERWALTUNG
              =============================================================== -->
-        <section x-show="activeTab === 'settings'" x-cloak aria-labelledby="heading-settings">
+        <section x-show="activeTab === 'settings' && currentUser?.role === 'admin'" x-cloak aria-labelledby="heading-settings">
           <div class="mb-5 pb-3 border-b border-zinc-300">
             <h2 id="heading-settings" class="text-lg sm:text-xl font-bold text-zinc-900"
                 :class="uiTheme === 'erp' ? 'font-mono uppercase' : ''">
@@ -2115,18 +2118,20 @@
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label for="usr-pass" class="block text-xs font-semibold text-zinc-700 mb-1">
-                      Passwort (oder nur PIN rechts)
+                      Passwort (mind. 8 Zeichen, oder PIN)
                     </label>
                     <input type="password" id="usr-pass" name="password" x-model="userForm.password"
+                           minlength="8"
                            autocomplete="new-password"
-                           :placeholder="userForm.id ? 'Leer = unverändert' : 'Passwort (optional falls PIN)'"
+                           :placeholder="userForm.id ? 'Leer = unverändert' : 'Passwort (mind. 8 Zeichen)'"
                            class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-sm">
                   </div>
                   <div>
                     <label for="usr-pin" class="block text-xs font-semibold text-zinc-700 mb-1">
-                      iPad Schnell-PIN
+                      iPad Schnell-PIN (mind. 4 Zeichen)
                     </label>
                     <input type="password" id="usr-pin" name="pin" x-model="userForm.pin"
+                           minlength="4"
                            inputmode="numeric"
                            autocorrect="off" autocapitalize="none" spellcheck="false"
                            :placeholder="userForm.id ? 'Leer = unverändert' : 'z. B. 1234'"
@@ -2138,6 +2143,10 @@
                   <div class="flex items-center gap-2">
                     <input type="checkbox" id="usr-active" name="active" x-model="userForm.active" class="w-4 h-4">
                     <label for="usr-active" class="text-xs font-semibold text-zinc-700">Konto aktiv (Anmeldung erlaubt)</label>
+                  </div>
+                  <div x-show="userForm.id" class="flex items-center gap-2">
+                    <input type="checkbox" id="usr-clear-pin" name="clear_pin" x-model="userForm.clear_pin" class="w-4 h-4">
+                    <label for="usr-clear-pin" class="text-xs text-zinc-700">Gespeicherte Schnell-PIN entfernen</label>
                   </div>
                   <div x-show="!userForm.id" class="flex items-center gap-2">
                     <input type="checkbox" id="usr-staff-sync" name="add_to_staff_list" x-model="userForm.add_to_staff_list" class="w-4 h-4">
@@ -2177,7 +2186,7 @@
                         Bearbeiten
                       </button>
                       <button type="button"
-                              x-show="!currentUser || currentUser.id !== u.id"
+                              x-show="currentUser && currentUser.id !== u.id"
                               @click="deleteUser(u)"
                               class="text-xs font-semibold text-red-600 hover:underline">
                         Löschen
@@ -2340,6 +2349,56 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20261125-5"></script>
+  <!-- =====================================================================
+       MODAL 3: Administrator-Anmeldung (bei deaktivierter globaler Anmeldepflicht)
+       ===================================================================== -->
+  <dialog id="admin-login-dialog" closedby="any" aria-labelledby="admin-login-dialog-title">
+    <div class="p-5 sm:p-6 bg-white">
+      <div class="flex items-center justify-between pb-3 mb-4 border-b border-zinc-200">
+        <h1 id="admin-login-dialog-title" class="text-base font-mono font-bold uppercase text-zinc-900">
+          Administrator-Anmeldung
+        </h1>
+        <button type="button" @click="closeAdminLoginModal()" aria-label="Dialog schließen"
+                class="text-xs px-3 py-1.5 border border-zinc-300 bg-zinc-50 hover:bg-zinc-100">
+          Schließen ✕
+        </button>
+      </div>
+
+      <div x-show="adminLoginError" role="alert"
+           class="mb-4 p-3 bg-red-50 border-l-4 border-red-600 text-xs font-semibold text-red-900"
+           x-text="adminLoginError"></div>
+
+      <form @submit.prevent="submitAdminLogin()" action="/api/auth/login" method="POST" class="space-y-4">
+        <div>
+          <label for="admin-login-user" class="block text-xs font-mono font-bold uppercase text-zinc-700 mb-1">
+            Benutzername
+          </label>
+          <input type="text" id="admin-login-user" x-model="adminLoginUsername" required
+                 autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"
+                 class="w-full border border-zinc-300 px-3 py-2 text-sm font-mono">
+        </div>
+        <div>
+          <label for="admin-login-secret" class="block text-xs font-mono font-bold uppercase text-zinc-700 mb-1">
+            Passwort oder Schnell-PIN
+          </label>
+          <input type="password" id="admin-login-secret" x-model="adminLoginSecret" required minlength="4"
+                 autocomplete="current-password"
+                 class="w-full border border-zinc-300 px-3 py-2 text-sm font-mono">
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-zinc-200">
+          <button type="button" @click="closeAdminLoginModal()"
+                  class="touch-btn bg-white hover:bg-zinc-100 text-zinc-800 border border-zinc-300 text-xs font-semibold px-4 py-2">
+            Abbrechen
+          </button>
+          <button type="submit" :disabled="isSubmitting"
+                  class="touch-btn bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-bold px-5 py-2">
+            Anmelden →
+          </button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <script src="/static/app.js?v=20261125-6"></script>
 </body>
 </html>

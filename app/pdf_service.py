@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -17,12 +17,15 @@ jinja_env = Environment(
 
 
 def format_dt_german(dt: datetime | None) -> str:
+    """Formatiert einen UTC-Zeitstempel zuverlässig in die konfigurierte lokale Zeitzone."""
     if dt is None:
-        dt = datetime.now()
+        dt = datetime.now(timezone.utc)
+    elif dt.tzinfo is None:
+        # SQLite speichert UTC-Datetimes ohne tzinfo
+        dt = dt.replace(tzinfo=timezone.utc)
     try:
         tz = ZoneInfo(settings.TIMEZONE)
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(tz)
+        dt = dt.astimezone(tz)
     except Exception:
         pass
     return dt.strftime("%d.%m.%Y um %H:%M Uhr")
@@ -36,6 +39,8 @@ def render_delivery_note_html(note: DeliveryNote, cfg: dict[str, str] | None = N
     dept_name = (cfg or {}).get("department_name") or settings.DEPARTMENT_NAME
     dept_sub = (cfg or {}).get("department_subtitle") or settings.DEPARTMENT_SUBTITLE
     dept_contact = (cfg or {}).get("department_contact") or settings.DEPARTMENT_CONTACT
+    has_item_supplier = any(bool(i.supplier) for i in note.items)
+    has_item_invoice = any(bool(i.invoice_number) for i in note.items)
 
     return template.render(
         note=note,
@@ -44,8 +49,10 @@ def render_delivery_note_html(note: DeliveryNote, cfg: dict[str, str] | None = N
         department_contact=dept_contact,
         school_address=school_address,
         total_quantity=total_qty,
+        has_item_supplier=has_item_supplier,
+        has_item_invoice=has_item_invoice,
         created_at_formatted=format_dt_german(note.created_at),
-        completed_at_formatted=format_dt_german(note.completed_at or datetime.now()),
+        completed_at_formatted=format_dt_german(note.completed_at or datetime.now(timezone.utc)),
     )
 
 

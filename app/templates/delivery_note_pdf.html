@@ -398,13 +398,13 @@
             {% endif %}
           </td>
         </tr>
-        {% if note.supplier %}
+        {% if note.supplier and not has_item_supplier %}
         <tr>
           <td class="meta-key">Lieferant:</td>
           <td class="meta-val">{{ note.supplier }}</td>
         </tr>
         {% endif %}
-        {% if note.invoice_number %}
+        {% if note.invoice_number and not has_item_invoice %}
         <tr>
           <td class="meta-key">Rechnungsnummer:</td>
           <td class="meta-val">{{ note.invoice_number }}</td>

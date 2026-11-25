@@ -41,14 +41,17 @@ function deliveryApp() {
     authEnabled: true,
     authenticated: false,
     currentUser: null,
-    loginUsers: [],
-    authToken: localStorage.getItem("it_ls_token") || "",
 
     // Login-Modus: 'password' (Benutzername + Passwort) | 'pin' (Schnell-PIN)
     loginMode: "password",
-    loginUsername: "",
+    loginUsername: localStorage.getItem("it_ls_last_username") || "",
     loginPin: "",
     loginError: "",
+
+    // Optionaler Admin-Login bei deaktivierter globaler Anmeldung
+    adminLoginUsername: localStorage.getItem("it_ls_last_username") || "",
+    adminLoginSecret: "",
+    adminLoginError: "",
 
     // Ersteinrichtungs-Formular (Initiales Admin-Konto)
     setupError: "",
@@ -152,8 +155,6 @@ function deliveryApp() {
       osticket_number: "",
       ordered_by: "",
       room: "",
-      supplier: "",
-      invoice_number: "",
       notes: "",
       status: "BEREIT",
       items: [
@@ -175,11 +176,10 @@ function deliveryApp() {
       delivered_by_custom: "",
       received_by: "",
       handover_notes: "",
-      recipient_email: "",
-      cc_email: "",
     },
     handoverError: "",
     signaturePad: null,
+    signatureResizeBound: false,
     completedResultNote: null,
 
     // Archiv-Detailansicht
@@ -236,15 +236,35 @@ function deliveryApp() {
       }, 4800);
     },
 
+    getCookie(name) {
+      const prefix = `${name}=`;
+      const parts = document.cookie ? document.cookie.split(";") : [];
+      for (const part of parts) {
+        const trimmed = part.trim();
+        if (trimmed.startsWith(prefix)) {
+          return decodeURIComponent(trimmed.slice(prefix.length));
+        }
+      }
+      return "";
+    },
+
     async apiFetch(url, options = {}) {
+      const method = (options.method || "GET").toUpperCase();
       const headers = Object.assign(
         { "Content-Type": "application/json" },
         options.headers || {}
       );
-      if (this.authToken) {
-        headers["X-Auth-Token"] = this.authToken;
+      if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+        const csrfToken = this.getCookie("it_ls_csrf");
+        if (csrfToken) {
+          headers["X-CSRF-Token"] = csrfToken;
+        }
       }
-      const response = await fetch(url, { ...options, headers });
+      const response = await fetch(url, {
+        ...options,
+        headers,
+        credentials: "same-origin",
+      });
       if (response.status === 401) {
         this.authenticated = false;
         this.currentUser = null;
@@ -273,15 +293,15 @@ function deliveryApp() {
 
     async checkAuthStatus() {
       try {
+        localStorage.removeItem("it_ls_token");
         const res = await fetch("/api/auth/status", {
-          headers: this.authToken ? { "X-Auth-Token": this.authToken } : {},
+          credentials: "same-origin",
         });
         const data = await res.json();
         this.needsSetup = Boolean(data.needs_setup);
         this.authEnabled = Boolean(data.auth_enabled);
         this.authenticated = Boolean(data.authenticated);
         this.currentUser = data.current_user || null;
-        this.loginUsers = Array.isArray(data.login_users) ? data.login_users : [];
 
         this.appTitle = data.app_title || this.appTitle;
         this.departmentName = data.department_name || this.departmentName;
@@ -302,14 +322,19 @@ function deliveryApp() {
         this.setupError = "Bitte Benutzername und vollständigen Namen eingeben.";
         return;
       }
-      if (!this.setupForm.password || this.setupForm.password.length < 4) {
-        this.setupError = "Das Passwort muss mindestens 4 Zeichen lang sein.";
+      if (!this.setupForm.password || this.setupForm.password.trim().length < 8) {
+        this.setupError = "Das Passwort muss mindestens 8 Zeichen lang sein.";
+        return;
+      }
+      if (this.setupForm.pin && this.setupForm.pin.trim() && this.setupForm.pin.trim().length < 4) {
+        this.setupError = "Die Schnell-PIN muss mindestens 4 Zeichen lang sein.";
         return;
       }
       this.isSubmitting = true;
       try {
         const res = await fetch("/api/auth/setup", {
           method: "POST",
+          credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(this.setupForm),
         });
@@ -318,11 +343,14 @@ function deliveryApp() {
           this.setupError = data.detail || "Ersteinrichtung fehlgeschlagen.";
           return;
         }
-        this.authToken = data.token;
-        localStorage.setItem("it_ls_token", data.token);
         this.currentUser = data.user;
         this.needsSetup = false;
         this.authenticated = true;
+        if (data.user && data.user.username) {
+          localStorage.setItem("it_ls_last_username", data.user.username);
+          this.loginUsername = data.user.username;
+          this.adminLoginUsername = data.user.username;
+        }
         this.showToast(
           "Ersteinrichtung abgeschlossen",
           `Willkommen, ${data.user.full_name}!`,
@@ -344,7 +372,7 @@ function deliveryApp() {
         username: uname || null,
         pin_or_password: this.loginPin,
       };
-      if (this.loginMode === "password" && !payload.username) {
+      if (!payload.username) {
         this.loginError = "Bitte geben Sie Ihren Benutzernamen ein.";
         return;
       }
@@ -357,6 +385,7 @@ function deliveryApp() {
       try {
         const res = await fetch("/api/auth/login", {
           method: "POST",
+          credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
@@ -365,8 +394,7 @@ function deliveryApp() {
           this.loginError = data.detail || "Anmeldung fehlgeschlagen.";
           return;
         }
-        this.authToken = data.token;
-        localStorage.setItem("it_ls_token", data.token);
+        localStorage.setItem("it_ls_last_username", data.user?.username || uname);
         this.authenticated = true;
         this.currentUser = data.user || null;
         this.loginPin = "";
@@ -384,15 +412,91 @@ function deliveryApp() {
       }
     },
 
+    openAdminLoginModal() {
+      this.adminLoginError = "";
+      this.adminLoginSecret = "";
+      const dlg = document.getElementById("admin-login-dialog");
+      if (dlg && !dlg.open) {
+        dlg.showModal();
+      }
+    },
+
+    closeAdminLoginModal() {
+      const dlg = document.getElementById("admin-login-dialog");
+      if (dlg && dlg.open) {
+        dlg.close();
+      }
+    },
+
+    async submitAdminLogin() {
+      this.adminLoginError = "";
+      const uname = this.adminLoginUsername ? this.adminLoginUsername.trim() : "";
+      if (!uname || !this.adminLoginSecret) {
+        this.adminLoginError = "Bitte Benutzername und Passwort/PIN eingeben.";
+        return;
+      }
+      this.isSubmitting = true;
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: uname, pin_or_password: this.adminLoginSecret }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          this.adminLoginError = data.detail || "Anmeldung fehlgeschlagen.";
+          return;
+        }
+        localStorage.setItem("it_ls_last_username", data.user?.username || uname);
+        this.authenticated = true;
+        this.currentUser = data.user || null;
+        this.adminLoginSecret = "";
+        this.closeAdminLoginModal();
+        await this.checkAuthStatus();
+        if (this.currentUser && this.currentUser.role === "admin") {
+          this.switchTab("settings");
+        }
+        this.showToast("Administrator angemeldet", this.currentUser?.full_name || uname, "success");
+      } catch (err) {
+        this.adminLoginError = err.message || "Verbindungsfehler.";
+      } finally {
+        this.isSubmitting = false;
+      }
+    },
+
     async logout() {
+      const csrfToken = this.getCookie("it_ls_csrf");
       await fetch("/api/auth/logout", {
         method: "POST",
-        headers: this.authToken ? { "X-Auth-Token": this.authToken } : {},
+        credentials: "same-origin",
+        headers: csrfToken ? { "X-CSRF-Token": csrfToken } : {},
       });
       localStorage.removeItem("it_ls_token");
-      this.authToken = "";
       this.currentUser = null;
       this.authenticated = false;
+      this.activeTab = "deliveries";
+      this.selectedSplitNote = null;
+      this.currentHandoverNote = null;
+      this.completedResultNote = null;
+      this.selectedArchiveNote = null;
+      this.openNotes = [];
+      this.draftAndReadyNotes = [];
+      this.archivedNotes = [];
+      this.usersList = [];
+      this.schools = [];
+      this.staffList = [];
+      this.stats = { draft: 0, ready: 0, completed: 0, email_errors: 0 };
+      this.resetPrepareForm(false);
+      this.resetSchoolForm();
+      this.resetStaffForm();
+      this.resetUserForm();
+      this.settingsForm.smtp_password = "";
+      this.settingsForm.smtp_password_set = false;
+      this.settingsForm.smtp_host = "";
+      this.settingsForm.smtp_username = "";
+      this.settingsForm.osticket_email = "";
+      this.settingsForm.global_archive_cc_email = "";
       await this.checkAuthStatus();
     },
 
@@ -407,7 +511,7 @@ function deliveryApp() {
           this.loadDraftAndReadyNotes(),
           this.loadArchivedNotes(),
         ];
-        if (!this.currentUser || this.currentUser.role === "admin") {
+        if (this.currentUser && this.currentUser.role === "admin") {
           promises.push(this.loadUsers(), this.loadSystemSettings());
         }
         await Promise.all(promises);
@@ -466,6 +570,11 @@ function deliveryApp() {
         this.loadSchools();
         this.loadStaff();
       } else if (tab === "settings") {
+        if (!this.currentUser || this.currentUser.role !== "admin") {
+          this.activeTab = "deliveries";
+          this.openAdminLoginModal();
+          return;
+        }
         this.loadUsers();
         this.loadSystemSettings();
       }
@@ -522,10 +631,20 @@ function deliveryApp() {
         this.userFormError = "Benutzername und vollständiger Name sind Pflichtfelder.";
         return;
       }
-      const hasPw = this.userForm.password && this.userForm.password.trim().length > 0;
-      const hasPin = this.userForm.pin && this.userForm.pin.trim().length > 0;
+      const pwTrim = this.userForm.password ? this.userForm.password.trim() : "";
+      const pinTrim = this.userForm.pin ? this.userForm.pin.trim() : "";
+      const hasPw = pwTrim.length > 0;
+      const hasPin = pinTrim.length > 0;
       if (!this.userForm.id && !hasPw && !hasPin) {
         this.userFormError = "Bitte vergeben Sie ein Passwort oder eine Schnell-PIN (oder beides).";
+        return;
+      }
+      if (hasPw && pwTrim.length < 8) {
+        this.userFormError = "Das Passwort muss mindestens 8 Zeichen lang sein.";
+        return;
+      }
+      if (hasPin && pinTrim.length < 4) {
+        this.userFormError = "Die Schnell-PIN muss mindestens 4 Zeichen lang sein.";
         return;
       }
 
@@ -695,12 +814,17 @@ function deliveryApp() {
         osticket_number: "",
         ordered_by: "",
         room: "",
-        supplier: "",
-        invoice_number: "",
         notes: "",
         status: "BEREIT",
         items: [
-          { device_type: "", inventory_number: "", serial_number: "", quantity: 1 },
+          {
+            device_type: "",
+            inventory_number: "",
+            serial_number: "",
+            supplier: "",
+            invoice_number: "",
+            quantity: 1,
+          },
         ],
       };
     },
@@ -823,8 +947,6 @@ function deliveryApp() {
         osticket_number: note.osticket_number || "",
         ordered_by: note.ordered_by || "",
         room: note.room || "",
-        supplier: note.supplier || "",
-        invoice_number: note.invoice_number || "",
         notes: note.notes || "",
         status: note.status === "ENTWURF" ? "ENTWURF" : "BEREIT",
         items:
@@ -876,6 +998,11 @@ function deliveryApp() {
           this.formError = `Position ${idx + 1}: Gerätebezeichnung und Inventarnummer sind Pflichtfelder.`;
           return;
         }
+        const qty = Number(validItems[idx].quantity);
+        if (!Number.isInteger(qty) || qty < 1 || qty > 9999) {
+          this.formError = `Position ${idx + 1}: Die Menge muss zwischen 1 und 9999 liegen.`;
+          return;
+        }
       }
 
       this.isSubmitting = true;
@@ -888,8 +1015,6 @@ function deliveryApp() {
           osticket_number: this.form.osticket_number ? this.form.osticket_number.trim() : null,
           ordered_by: this.form.ordered_by,
           room: this.form.room,
-          supplier: this.form.supplier,
-          invoice_number: this.form.invoice_number,
           notes: this.form.notes,
           status: targetStatus,
           items: validItems.map((i) => ({
@@ -898,7 +1023,7 @@ function deliveryApp() {
             serial_number: i.serial_number ? i.serial_number.trim() : null,
             supplier: i.supplier ? i.supplier.trim() : null,
             invoice_number: i.invoice_number ? i.invoice_number.trim() : null,
-            quantity: Number(i.quantity) || 1,
+            quantity: Number(i.quantity),
           })),
         };
 
@@ -1069,8 +1194,6 @@ function deliveryApp() {
         delivered_by_custom: customStaffName,
         received_by: note.ordered_by || "",
         handover_notes: "",
-        recipient_email: note.recipient_email || "",
-        cc_email: note.cc_email || "",
       };
 
       this.activeTab = "handover";
@@ -1081,29 +1204,61 @@ function deliveryApp() {
       });
     },
 
+    resizeSignatureCanvas(preserveStrokes = false) {
+      const canvas = document.getElementById("signature-canvas");
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+
+      const existingData =
+        preserveStrokes && this.signaturePad && !this.signaturePad.isEmpty()
+          ? this.signaturePad.toData()
+          : null;
+
+      const ratio = Math.max(window.devicePixelRatio || 1, 1);
+      canvas.width = Math.round(rect.width * ratio);
+      canvas.height = Math.round(rect.height * ratio);
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, rect.width, rect.height);
+
+      if (this.signaturePad) {
+        this.signaturePad.clear();
+        if (existingData) {
+          this.signaturePad.fromData(existingData);
+        }
+      }
+    },
+
     initSignaturePad() {
       const canvas = document.getElementById("signature-canvas");
       if (!canvas || typeof SignaturePad === "undefined") return;
 
-      const resizeCanvas = () => {
-        const ratio = Math.max(window.devicePixelRatio || 1, 1);
-        const rect = canvas.getBoundingClientRect();
-        const width = rect.width || 600;
-        const height = rect.height || 220;
-        canvas.width = width * ratio;
-        canvas.height = height * ratio;
-        const ctx = canvas.getContext("2d");
-        ctx.scale(ratio, ratio);
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, width, height);
-      };
+      if (this.signaturePad) {
+        this.signaturePad.off();
+        this.signaturePad = null;
+      }
 
-      resizeCanvas();
-      this.signaturePad = new SignaturePad(canvas, {
-        backgroundColor: "rgb(255, 255, 255)",
-        penColor: "rgb(15, 23, 42)",
-        minWidth: 1.2,
-        maxWidth: 3.0,
+      if (!this.signatureResizeBound) {
+        this.signatureResizeBound = true;
+        const onViewportChange = () => {
+          if (this.activeTab === "handover" && this.signaturePad) {
+            requestAnimationFrame(() => this.resizeSignatureCanvas(true));
+          }
+        };
+        window.addEventListener("resize", onViewportChange);
+        window.addEventListener("orientationchange", onViewportChange);
+      }
+
+      requestAnimationFrame(() => {
+        this.resizeSignatureCanvas(false);
+        this.signaturePad = new SignaturePad(canvas, {
+          backgroundColor: "rgb(255, 255, 255)",
+          penColor: "rgb(15, 23, 42)",
+          minWidth: 1.2,
+          maxWidth: 3.0,
+        });
       });
     },
 
@@ -1152,8 +1307,6 @@ function deliveryApp() {
               received_by: this.handoverForm.received_by.trim(),
               handover_notes: this.handoverForm.handover_notes,
               signature_data: signatureDataUrl,
-              recipient_email: this.handoverForm.recipient_email,
-              cc_email: this.handoverForm.cc_email,
             }),
           }
         );

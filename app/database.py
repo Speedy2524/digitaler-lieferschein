@@ -1,4 +1,11 @@
+import base64
+import hashlib
+import os
 from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -26,45 +33,110 @@ def get_db():
         db.close()
 
 
+# ==============================================================================
+# Verschlüsselung sensibler Systemeinstellungen (z. B. SMTP-Passwort)
+# ==============================================================================
+
+_ENC_PREFIX = "enc:v1:"
+
+
+def _get_fernet() -> Fernet:
+    """Lädt oder erzeugt einen persistenten 256-Bit-Schlüssel für DB-Secrets."""
+    if settings.SECRET_KEY:
+        digest = hashlib.sha256(settings.SECRET_KEY.encode("utf-8")).digest()
+        return Fernet(base64.urlsafe_b64encode(digest))
+
+    key_file: Path = settings.DATA_DIR / ".secret_key"
+    if key_file.exists():
+        raw_key = key_file.read_text(encoding="utf-8").strip()
+        if raw_key:
+            return Fernet(raw_key.encode("utf-8"))
+
+    new_key = Fernet.generate_key()
+    key_file.parent.mkdir(parents=True, exist_ok=True)
+    key_file.write_bytes(new_key)
+    try:
+        os.chmod(key_file, 0o600)
+    except OSError:
+        pass
+    return Fernet(new_key)
+
+
+def encrypt_secret_value(plaintext: str) -> str:
+    if not plaintext:
+        return ""
+    if plaintext.startswith(_ENC_PREFIX):
+        return plaintext
+    token = _get_fernet().encrypt(plaintext.encode("utf-8")).decode("utf-8")
+    return f"{_ENC_PREFIX}{token}"
+
+
+def decrypt_secret_value(stored: str) -> str:
+    if not stored:
+        return ""
+    if not stored.startswith(_ENC_PREFIX):
+        return stored
+    try:
+        raw = stored[len(_ENC_PREFIX):]
+        return _get_fernet().decrypt(raw.encode("utf-8")).decode("utf-8")
+    except InvalidToken:
+        return ""
+
+
+PLACEHOLDER_SMTP_HOSTS = {"mail.kommune.local"}
+PLACEHOLDER_EMAILS = {"tickets@kommune.local", "schul-it@kommune.local"}
+
+
+def _clean_placeholder(val: str, placeholders: set[str]) -> str:
+    v = (val or "").strip()
+    return "" if v.lower() in placeholders else v
+
+
 DEFAULT_SYSTEM_SETTINGS: dict[str, str] = {
     "app_title": settings.APP_TITLE,
     "department_name": settings.DEPARTMENT_NAME,
     "department_subtitle": settings.DEPARTMENT_SUBTITLE,
     "department_contact": settings.DEPARTMENT_CONTACT,
-    "auth_enabled": "true" if settings.AUTH_ENABLED else "true",
+    "auth_enabled": "true" if settings.AUTH_ENABLED else "false",
     "smtp_enabled": "true" if settings.SMTP_ENABLED else "false",
-    "smtp_host": "" if settings.SMTP_HOST == "mail.kommune.local" else settings.SMTP_HOST,
+    "smtp_host": _clean_placeholder(settings.SMTP_HOST, PLACEHOLDER_SMTP_HOSTS),
     "smtp_port": str(settings.SMTP_PORT),
     "smtp_security": settings.SMTP_SECURITY,
     "smtp_username": settings.SMTP_USERNAME,
-    "smtp_password": settings.SMTP_PASSWORD,
-    "smtp_from_email": "" if settings.SMTP_FROM_EMAIL == "schul-it@kommune.local" else settings.SMTP_FROM_EMAIL,
+    "smtp_password": encrypt_secret_value(settings.SMTP_PASSWORD) if settings.SMTP_PASSWORD else "",
+    "smtp_from_email": _clean_placeholder(settings.SMTP_FROM_EMAIL, PLACEHOLDER_EMAILS),
     "smtp_from_name": settings.SMTP_FROM_NAME,
-    "osticket_enabled": "true" if bool(settings.OSTICKET_EMAIL) else "false",
-    "osticket_email": settings.OSTICKET_EMAIL,
+    "osticket_enabled": "true" if _clean_placeholder(settings.OSTICKET_EMAIL, PLACEHOLDER_EMAILS) else "false",
+    "osticket_email": _clean_placeholder(settings.OSTICKET_EMAIL, PLACEHOLDER_EMAILS),
     "global_archive_cc_email": settings.GLOBAL_ARCHIVE_CC_EMAIL,
 }
 
 
 def get_runtime_settings(db: Session) -> dict[str, str]:
-    """Liest alle Systemeinstellungen aus der DB (mit Fallback auf DEFAULT_SYSTEM_SETTINGS)."""
+    """Liest alle Systemeinstellungen aus der DB und entschlüsselt gespeicherte Secrets."""
     result = dict(DEFAULT_SYSTEM_SETTINGS)
     rows = db.query(SystemSetting).all()
     for row in rows:
         result[row.key] = row.value
+
+    result["smtp_password"] = decrypt_secret_value(result.get("smtp_password", ""))
     return result
 
 
 def set_runtime_settings(db: Session, updates: dict[str, str]) -> dict[str, str]:
-    """Speichert geänderte Systemeinstellungen persistent in der SQLite-DB."""
+    """Speichert geänderte Systemeinstellungen persistent (mit verschlüsseltem SMTP-Passwort)."""
     for key, val in updates.items():
         if key not in DEFAULT_SYSTEM_SETTINGS:
             continue
+        stored_val = str(val)
+        if key == "smtp_password":
+            stored_val = encrypt_secret_value(stored_val) if stored_val else ""
+
         existing = db.query(SystemSetting).filter(SystemSetting.key == key).first()
         if existing:
-            existing.value = str(val)
+            existing.value = stored_val
         else:
-            db.add(SystemSetting(key=key, value=str(val)))
+            db.add(SystemSetting(key=key, value=stored_val))
     db.commit()
     return get_runtime_settings(db)
 
@@ -72,7 +144,10 @@ def set_runtime_settings(db: Session, updates: dict[str, str]) -> dict[str, str]
 def generate_next_delivery_number(db: Session, year: int | None = None) -> str:
     """Erzeugt eine fortlaufende Lieferschein-Nummer im Format LS-YYYY-NNNN."""
     if year is None:
-        year = datetime.now().year
+        try:
+            year = datetime.now(ZoneInfo(settings.TIMEZONE)).year
+        except Exception:
+            year = datetime.now().year
     prefix = f"LS-{year}-"
     existing = (
         db.query(DeliveryNote.delivery_number)
@@ -92,8 +167,18 @@ def generate_next_delivery_number(db: Session, year: int | None = None) -> str:
 
 
 def init_db_and_seed() -> None:
-    """Erstellt Tabellen, führt sanfte Spalten-Migrationen durch und legt initiale Stammdaten an."""
+    """Erstellt Tabellen, führt sanfte Migrationen durch und legt initiale Stammdaten an."""
     Base.metadata.create_all(bind=engine)
+
+    # SQLite-Datenbankdatei vor Lesezugriff durch andere lokale Systemkonten schützen
+    if settings.DATABASE_URL.startswith("sqlite:///"):
+        db_file = Path(settings.DATABASE_URL.replace("sqlite:///", ""))
+        if db_file.exists():
+            try:
+                os.chmod(db_file, 0o600)
+            except OSError:
+                pass
+
     db = SessionLocal()
     try:
         # 0. Sanfte Migration für bestehende SQLite-DBs (supplier & invoice_number an delivery_items)
@@ -105,11 +190,24 @@ def init_db_and_seed() -> None:
                 db.execute(text("ALTER TABLE delivery_items ADD COLUMN invoice_number VARCHAR(100)"))
             db.commit()
 
-        # 1. Initiale System-Settings in DB anlegen, falls noch nicht vorhanden
-        existing_keys = {row.key for row in db.query(SystemSetting).all()}
+        # 1. Initiale System-Settings in DB anlegen & Altlasten/Klartext-Secrets bereinigen
+        existing_rows = {row.key: row for row in db.query(SystemSetting).all()}
         for k, v in DEFAULT_SYSTEM_SETTINGS.items():
-            if k not in existing_keys:
+            if k not in existing_rows:
                 db.add(SystemSetting(key=k, value=v))
+
+        if "smtp_password" in existing_rows:
+            pw_row = existing_rows["smtp_password"]
+            if pw_row.value and not pw_row.value.startswith(_ENC_PREFIX):
+                pw_row.value = encrypt_secret_value(pw_row.value)
+
+        if "osticket_email" in existing_rows:
+            ot_row = existing_rows["osticket_email"]
+            if ot_row.value.strip().lower() == "tickets@kommune.local":
+                ot_row.value = ""
+                if "osticket_enabled" in existing_rows:
+                    existing_rows["osticket_enabled"].value = "false"
+
         db.flush()
 
         # 2. Beispielschulen & Mitarbeiter
@@ -182,7 +280,10 @@ def init_db_and_seed() -> None:
         if db.query(DeliveryNote).count() == 0:
             rbs = db.query(School).filter(School.name == "Musterschule Nord GS").first()
             asr = db.query(School).filter(School.name == "Friedrich-Schiller-Realschule").first()
-            year = datetime.now().year
+            try:
+                year = datetime.now(ZoneInfo(settings.TIMEZONE)).year
+            except Exception:
+                year = datetime.now().year
 
             if rbs:
                 note1 = DeliveryNote(
@@ -195,8 +296,6 @@ def init_db_and_seed() -> None:
                     osticket_number="382814",
                     ordered_by="Fr. Schneider (Konrektorin)",
                     room="Lehrerzimmer / Medienwagen 2",
-                    supplier="Bechtle Logistik & Service GmbH",
-                    invoice_number="RE-2026-88412",
                     notes="iPads sind im MDM (Jamf School) vorregistriert. Bitte Ladekoffer-Schlüssel im Sekretariat abgeben.",
                 )
                 db.add(note1)

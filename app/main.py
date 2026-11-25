@@ -2,14 +2,19 @@ import base64
 import hashlib
 import hmac
 import secrets
+import time
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Lock
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
@@ -60,6 +65,163 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+_FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<rect width="32" height="32" rx="4" fill="#18181b"/>'
+    '<path d="M7 9h18v3H7zm0 6h12v3H7zm0 6h15v3H7z" fill="#38bdf8"/>'
+    "</svg>"
+)
+
+_CSP_POLICY = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-eval'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; "
+    "font-src 'self' data:; "
+    "connect-src 'self'; "
+    "object-src 'none'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self';"
+)
+
+_RATE_LIMIT_LOCK = Lock()
+_LOGIN_FAILED_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
+_LOGIN_TOTAL_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
+_SETUP_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
+
+
+def _clear_rate_limiters() -> None:
+    """Hilfsfunktion zum Zurücksetzen von Rate-Limits (z. B. in isolierten Testläufen)."""
+    with _RATE_LIMIT_LOCK:
+        _LOGIN_FAILED_ATTEMPTS.clear()
+        _LOGIN_TOTAL_ATTEMPTS.clear()
+        _SETUP_ATTEMPTS.clear()
+
+
+def _is_https_request(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    return request.url.scheme == "https" or forwarded_proto == "https"
+
+
+def _get_client_ip(request: Request) -> str:
+    client_host = request.client.host if request.client else "unknown"
+    is_trusted_proxy = (
+        client_host.startswith("127.")
+        or client_host.startswith("10.")
+        or client_host.startswith("172.")
+        or client_host.startswith("192.168.")
+        or client_host == "::1"
+    )
+    if is_trusted_proxy:
+        real_ip = request.headers.get("x-real-ip", "").strip()
+        if real_ip:
+            return real_ip
+        forwarded = request.headers.get("x-forwarded-for", "").strip()
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return client_host
+
+
+def _prune_and_check_limit(
+    store: dict[str, deque[float]],
+    key: str,
+    limit: int,
+    window_seconds: int,
+    record: bool = False,
+) -> None:
+    now = time.monotonic()
+    cutoff = now - window_seconds
+    with _RATE_LIMIT_LOCK:
+        bucket = store[key]
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= limit:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Zu viele Anmeldeversuche. Bitte warten Sie einige Minuten und versuchen Sie es erneut.",
+            )
+        if record:
+            bucket.append(now)
+
+
+def _record_rate_attempt(store: dict[str, deque[float]], key: str, window_seconds: int) -> None:
+    now = time.monotonic()
+    cutoff = now - window_seconds
+    with _RATE_LIMIT_LOCK:
+        bucket = store[key]
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        bucket.append(now)
+
+
+def _is_same_origin(request: Request) -> bool:
+    expected_hosts: set[str] = set()
+    for hdr in (request.headers.get("host"), request.headers.get("x-forwarded-host")):
+        if hdr:
+            val = hdr.split(",")[0].strip().lower()
+            if val:
+                expected_hosts.add(val)
+
+    origin = request.headers.get("origin", "").strip()
+    if origin:
+        if origin.lower() == "null":
+            return False
+        parsed = urlsplit(origin)
+        if not parsed.netloc or (expected_hosts and parsed.netloc.lower() not in expected_hosts):
+            return False
+        if _is_https_request(request) and parsed.scheme.lower() != "https":
+            return False
+        return True
+
+    referer = request.headers.get("referer", "").strip()
+    if referer:
+        parsed = urlsplit(referer)
+        if not parsed.netloc or (expected_hosts and parsed.netloc.lower() not in expected_hosts):
+            return False
+        if _is_https_request(request) and parsed.scheme.lower() != "https":
+            return False
+        return True
+
+    return True
+
+
+def _apply_security_headers(response: Response) -> Response:
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=(), geolocation=()")
+    response.headers.setdefault("Content-Security-Policy", _CSP_POLICY)
+    return response
+
+
+@app.middleware("http")
+async def security_and_csrf_middleware(request: Request, call_next):
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        if not _is_same_origin(request):
+            return _apply_security_headers(
+                JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Cross-Origin-Anfrage abgelehnt."},
+                )
+            )
+
+        path = request.url.path
+        has_session_cookie = bool(request.cookies.get("it_ls_token", "").strip())
+        if has_session_cookie and path not in {"/api/auth/login", "/api/auth/setup"}:
+            csrf_cookie = request.cookies.get("it_ls_csrf", "").strip()
+            csrf_header = request.headers.get("x-csrf-token", "").strip()
+            if not csrf_cookie or not csrf_header or not hmac.compare_digest(csrf_cookie, csrf_header):
+                return _apply_security_headers(
+                    JSONResponse(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        content={"detail": "Ungültiges oder fehlendes CSRF-Token. Bitte Seite neu laden."},
+                    )
+                )
+
+    response = await call_next(request)
+    return _apply_security_headers(response)
+
 
 # ==============================================================================
 # Passwort-/PIN-Hashing (PBKDF2-HMAC-SHA256) & Session-Management
@@ -84,11 +246,6 @@ def verify_secret(secret: str, stored_hash: str | None) -> bool:
         return False
 
 
-def _compute_legacy_env_token() -> str:
-    secret = f"{settings.AUTH_USERNAME}:{settings.AUTH_PASSWORD}:{settings.AUTH_PIN}"
-    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
-
-
 def _create_user_session(db: Session, user: User) -> str:
     token = secrets.token_urlsafe(48)
     now = datetime.now(timezone.utc)
@@ -99,6 +256,29 @@ def _create_user_session(db: Session, user: User) -> str:
     return token
 
 
+def _issue_session_cookies(response: Response, request: Request, session_token: str) -> None:
+    is_https = _is_https_request(request)
+    csrf_token = secrets.token_urlsafe(32)
+    response.set_cookie(
+        key="it_ls_token",
+        value=session_token,
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=is_https,
+        max_age=60 * 60 * 24 * 14,
+    )
+    response.set_cookie(
+        key="it_ls_csrf",
+        value=csrf_token,
+        path="/",
+        httponly=False,
+        samesite="lax",
+        secure=is_https,
+        max_age=60 * 60 * 24 * 14,
+    )
+
+
 def _serialize_user(user: User) -> UserResponse:
     return UserResponse(
         id=user.id,
@@ -106,6 +286,7 @@ def _serialize_user(user: User) -> UserResponse:
         full_name=user.full_name,
         email=user.email,
         role=user.role,
+        has_password=bool(user.password_hash),
         has_pin=bool(user.pin_hash),
         active=user.active,
         last_login_at=user.last_login_at,
@@ -115,17 +296,12 @@ def _serialize_user(user: User) -> UserResponse:
 
 def _get_current_user_optional(request: Request, db: Session) -> User | None:
     now = datetime.now(timezone.utc)
-    candidate_tokens = [
-        request.headers.get("X-Auth-Token", "").strip(),
-        request.cookies.get("it_ls_token", "").strip(),
-    ]
-    for token in candidate_tokens:
-        if not token:
-            continue
+    cookie_token = request.cookies.get("it_ls_token", "").strip()
+    if cookie_token:
         session_row = (
             db.query(UserSession)
             .options(joinedload(UserSession.user))
-            .filter(UserSession.token == token)
+            .filter(UserSession.token == cookie_token)
             .first()
         )
         if session_row and session_row.user and session_row.user.active:
@@ -135,7 +311,7 @@ def _get_current_user_optional(request: Request, db: Session) -> User | None:
             if exp > now:
                 return session_row.user
 
-    # HTTP Basic Auth prüfen
+    # HTTP Basic Auth prüfen (nur eindeutiger Benutzername / E-Mail)
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Basic "):
         try:
@@ -144,7 +320,7 @@ def _get_current_user_optional(request: Request, db: Session) -> User | None:
             uname = username.strip().lower()
             active_users = db.query(User).filter(User.active.is_(True)).all()
             for u in active_users:
-                if u.username.lower() == uname or u.full_name.lower() == uname:
+                if u.username.lower() == uname or (u.email and u.email.lower() == uname):
                     if verify_secret(password, u.password_hash) or verify_secret(password, u.pin_hash):
                         return u
         except Exception:
@@ -156,14 +332,11 @@ def _get_current_user_optional(request: Request, db: Session) -> User | None:
 def _is_auth_enforced(db: Session) -> bool:
     """
     Prüft, ob die Anmeldung aktuell erzwungen wird:
-    - Sobald mindestens ein lokaler Benutzer in der DB existiert UND auth_enabled in den Settings aktiv ist -> True
-    - Oder wenn AUTH_ENABLED=true explizit in der .env gesetzt ist -> True
+    - Vor abgeschlossener Ersteinrichtung (keine Benutzer vorhanden) -> immer True (Lockout)
+    - Danach gemäß gespeicherter DB-Konfiguration (`auth_enabled`)
     """
-    if settings.AUTH_ENABLED:
+    if db.query(User).count() == 0:
         return True
-    user_count = db.query(User).count()
-    if user_count == 0:
-        return False
     cfg = get_runtime_settings(db)
     return cfg.get("auth_enabled", "true").lower() == "true"
 
@@ -176,22 +349,20 @@ def require_auth(request: Request, db: Session = Depends(get_db)) -> User | None
     if not _is_auth_enforced(db):
         return None
 
-    # Fallback auf .env-Token falls noch gar keine DB-User existieren
-    if db.query(User).count() == 0:
-        expected = _compute_legacy_env_token()
-        token = request.headers.get("X-Auth-Token", "") or request.cookies.get("it_ls_token", "")
-        if token and hmac.compare_digest(token, expected):
-            return None
-
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentifizierung erforderlich. Bitte melden Sie sich an.",
     )
 
 
-def require_admin(request: Request, db: Session = Depends(get_db)) -> User | None:
-    user = require_auth(request, db)
-    if user is not None and user.role != "admin":
+def require_admin(request: Request, db: Session = Depends(get_db)) -> User:
+    user = _get_current_user_optional(request, db)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Administrator-Anmeldung erforderlich.",
+        )
+    if user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Diese Aktion erfordert Administrator-Berechtigungen.",
@@ -209,14 +380,25 @@ def health_check():
 
 
 @app.get("/api/auth/status")
-def auth_status(request: Request, db: Session = Depends(get_db)):
+def auth_status(request: Request, response: Response, db: Session = Depends(get_db)):
     cfg = get_runtime_settings(db)
     user_count = db.query(User).count()
     needs_setup = user_count == 0
-    auth_enabled = cfg.get("auth_enabled", "true").lower() == "true" or settings.AUTH_ENABLED
+    auth_enabled = True if needs_setup else (cfg.get("auth_enabled", "true").lower() == "true")
     current_user = _get_current_user_optional(request, db)
 
     is_authenticated = current_user is not None or (not auth_enabled and not needs_setup)
+
+    if current_user is not None and not request.cookies.get("it_ls_csrf", "").strip():
+        response.set_cookie(
+            key="it_ls_csrf",
+            value=secrets.token_urlsafe(32),
+            path="/",
+            httponly=False,
+            samesite="lax",
+            secure=_is_https_request(request),
+            max_age=60 * 60 * 24 * 14,
+        )
 
     smtp_host = (cfg.get("smtp_host") or "").strip()
     smtp_enabled = (
@@ -231,32 +413,35 @@ def auth_status(request: Request, db: Session = Depends(get_db)):
         and osticket_email != "tickets@kommune.local"
     )
 
-    active_users = db.query(User).filter(User.active.is_(True)).order_by(User.full_name.asc()).all()
-    login_users_hint = [
-        {"username": u.username, "full_name": u.full_name, "has_pin": bool(u.pin_hash)}
-        for u in active_users
-    ]
+    is_admin = current_user is not None and current_user.role == "admin"
 
     return {
         "needs_setup": needs_setup,
         "auth_enabled": auth_enabled,
         "authenticated": is_authenticated,
         "current_user": _serialize_user(current_user).model_dump() if current_user else None,
-        "login_users": login_users_hint,
         "app_title": cfg.get("app_title") or settings.APP_TITLE,
         "department_name": cfg.get("department_name") or settings.DEPARTMENT_NAME,
-        "department_subtitle": cfg.get("department_subtitle") or settings.DEPARTMENT_SUBTITLE,
-        "department_contact": cfg.get("department_contact") or settings.DEPARTMENT_CONTACT,
-        "smtp_enabled": smtp_enabled,
-        "smtp_host": smtp_host,
-        "osticket_configured": osticket_enabled,
-        "osticket_email": osticket_email if osticket_enabled else "",
+        "department_subtitle": (cfg.get("department_subtitle") or settings.DEPARTMENT_SUBTITLE) if is_authenticated else "",
+        "department_contact": (cfg.get("department_contact") or settings.DEPARTMENT_CONTACT) if is_authenticated else "",
+        "smtp_enabled": smtp_enabled if is_authenticated else False,
+        "smtp_host": smtp_host if is_admin else "",
+        "osticket_configured": osticket_enabled if is_authenticated else False,
+        "osticket_email": osticket_email if (is_admin and osticket_enabled) else "",
     }
 
 
 @app.post("/api/auth/setup")
-def initial_setup(payload: InitialSetupRequest, response: Response, db: Session = Depends(get_db)):
+def initial_setup(
+    payload: InitialSetupRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     """Ersteinrichtung: Legt das erste Administrator-Konto an, falls noch kein Benutzer existiert."""
+    client_ip = _get_client_ip(request)
+    _prune_and_check_limit(_SETUP_ATTEMPTS, client_ip, limit=10, window_seconds=300, record=True)
+
     if db.query(User).count() > 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -290,23 +475,25 @@ def initial_setup(payload: InitialSetupRequest, response: Response, db: Session 
 
     set_runtime_settings(db, {"auth_enabled": "true"})
     token = _create_user_session(db, admin_user)
+    _issue_session_cookies(response, request, token)
 
-    response.set_cookie(
-        key="it_ls_token",
-        value=token,
-        httponly=True,
-        samesite="lax",
-        max_age=60 * 60 * 24 * 14,
-    )
     return {
         "authenticated": True,
-        "token": token,
         "user": _serialize_user(admin_user),
     }
 
 
 @app.post("/api/auth/login")
-def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
+def login(
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    client_ip = _get_client_ip(request)
+    _prune_and_check_limit(_LOGIN_FAILED_ATTEMPTS, client_ip, limit=10, window_seconds=300, record=False)
+    _prune_and_check_limit(_LOGIN_TOTAL_ATTEMPTS, client_ip, limit=30, window_seconds=60, record=True)
+
     secret_in = payload.pin_or_password.strip()
     username_in = payload.username.strip() if payload.username else ""
 
@@ -316,57 +503,54 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
     if username_in:
         uname_lower = username_in.lower()
         for u in active_users:
-            if (
-                u.username.lower() == uname_lower
-                or u.full_name.lower() == uname_lower
-                or (u.email and u.email.lower() == uname_lower)
-            ):
-                if verify_secret(secret_in, u.pin_hash) or verify_secret(secret_in, u.password_hash):
+            if u.username.lower() == uname_lower or (u.email and u.email.lower() == uname_lower):
+                if (u.pin_hash and verify_secret(secret_in, u.pin_hash)) or (
+                    u.password_hash and verify_secret(secret_in, u.password_hash)
+                ):
                     matched_user = u
                     break
     else:
-        # Schnell-PIN-Login (oder Passwort) ohne Benutzernamen
+        # PIN-only Login nur zulassen, wenn die PIN eindeutig genau einem Konto zugeordnet ist
+        matches: list[User] = []
         for u in active_users:
-            if verify_secret(secret_in, u.pin_hash) or verify_secret(secret_in, u.password_hash):
-                matched_user = u
-                break
+            if (u.pin_hash and verify_secret(secret_in, u.pin_hash)) or (
+                u.password_hash and verify_secret(secret_in, u.password_hash)
+            ):
+                matches.append(u)
+        if len(matches) == 1:
+            matched_user = matches[0]
 
     if not matched_user:
+        _record_rate_attempt(_LOGIN_FAILED_ATTEMPTS, client_ip, window_seconds=300)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Anmeldung fehlgeschlagen: Benutzername oder Passwort/PIN ungültig.",
         )
 
+    with _RATE_LIMIT_LOCK:
+        _LOGIN_FAILED_ATTEMPTS.pop(client_ip, None)
+
     token = _create_user_session(db, matched_user)
-    response.set_cookie(
-        key="it_ls_token",
-        value=token,
-        path="/",
-        httponly=True,
-        samesite="lax",
-        max_age=60 * 60 * 24 * 14,
-    )
+    _issue_session_cookies(response, request, token)
     return {
         "authenticated": True,
-        "token": token,
         "user": _serialize_user(matched_user),
     }
 
 
 @app.post("/api/auth/logout")
 def logout(request: Request, response: Response, db: Session = Depends(get_db)):
-    header_token = request.headers.get("X-Auth-Token", "").strip()
     cookie_token = request.cookies.get("it_ls_token", "").strip()
-    tokens_to_remove = [t for t in {header_token, cookie_token} if t]
-    if tokens_to_remove:
-        # Auch alle anderen Sessions desselben Benutzers beim expliziten Logout bereinigen
-        sess_rows = db.query(UserSession).filter(UserSession.token.in_(tokens_to_remove)).all()
+    if cookie_token:
+        sess_rows = db.query(UserSession).filter(UserSession.token == cookie_token).all()
         user_ids = {s.user_id for s in sess_rows}
-        db.query(UserSession).filter(UserSession.token.in_(tokens_to_remove)).delete(synchronize_session=False)
+        db.query(UserSession).filter(UserSession.token == cookie_token).delete(synchronize_session=False)
         if user_ids:
             db.query(UserSession).filter(UserSession.user_id.in_(user_ids)).delete(synchronize_session=False)
         db.commit()
-    response.delete_cookie(key="it_ls_token", path="/", samesite="lax", httponly=True)
+    is_https = _is_https_request(request)
+    response.delete_cookie(key="it_ls_token", path="/", samesite="lax", httponly=True, secure=is_https)
+    response.delete_cookie(key="it_ls_csrf", path="/", samesite="lax", httponly=False, secure=is_https)
     return {"authenticated": False}
 
 
@@ -401,14 +585,13 @@ def create_user(payload: UserCreateRequest, db: Session = Depends(get_db)):
             status_code=400,
             detail="Bitte entweder ein Passwort oder eine Schnell-PIN (oder beides) vergeben.",
         )
-    effective_pw = pw_clean or pin_clean
 
     new_user = User(
         username=payload.username.strip(),
         full_name=payload.full_name.strip(),
         email=payload.email.strip() if payload.email else None,
         role=payload.role,
-        password_hash=hash_secret(effective_pw),
+        password_hash=hash_secret(pw_clean) if pw_clean else "",
         pin_hash=hash_secret(pin_clean) if pin_clean else None,
         active=payload.active,
     )
@@ -437,7 +620,8 @@ def create_user(payload: UserCreateRequest, db: Session = Depends(get_db)):
 def update_user(
     user_id: int,
     payload: UserUpdateRequest,
-    current_user: User | None = Depends(require_admin),
+    request: Request,
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.id == user_id).first()
@@ -452,8 +636,27 @@ def update_user(
     if dup:
         raise HTTPException(status_code=400, detail="Dieser Benutzername ist bereits vergeben.")
 
-    if current_user and current_user.id == user.id and not payload.active:
-        raise HTTPException(status_code=400, detail="Sie können Ihr eigenes Konto nicht deaktivieren.")
+    if current_user.id == user.id:
+        if not payload.active:
+            raise HTTPException(status_code=400, detail="Sie können Ihr eigenes Konto nicht deaktivieren.")
+        if payload.role != "admin":
+            raise HTTPException(status_code=400, detail="Sie können Ihre eigene Administrator-Rolle nicht herabstufen.")
+
+    if user.role == "admin" and user.active and (payload.role != "admin" or not payload.active):
+        active_admin_count = db.query(User).filter(User.role == "admin", User.active.is_(True)).count()
+        if active_admin_count <= 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Der letzte aktive Administrator kann nicht deaktiviert oder herabgestuft werden.",
+            )
+
+    credentials_or_access_changed = (
+        payload.role != user.role
+        or payload.active != user.active
+        or bool(payload.password and payload.password.strip())
+        or bool(payload.clear_pin)
+        or bool(payload.pin and payload.pin.strip())
+    )
 
     user.username = payload.username.strip()
     user.full_name = payload.full_name.strip()
@@ -469,6 +672,19 @@ def update_user(
     elif payload.pin and payload.pin.strip():
         user.pin_hash = hash_secret(payload.pin.strip())
 
+    if not user.password_hash and not user.pin_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="Der Benutzer muss mindestens über ein Passwort oder eine Schnell-PIN verfügen.",
+        )
+
+    if credentials_or_access_changed:
+        current_token = request.cookies.get("it_ls_token", "").strip()
+        sess_query = db.query(UserSession).filter(UserSession.user_id == user.id)
+        if current_user.id == user.id and user.active and current_token:
+            sess_query = sess_query.filter(UserSession.token != current_token)
+        sess_query.delete(synchronize_session=False)
+
     db.commit()
     db.refresh(user)
     return _serialize_user(user)
@@ -477,7 +693,7 @@ def update_user(
 @app.delete("/api/users/{user_id}", dependencies=[Depends(require_admin)])
 def delete_user(
     user_id: int,
-    current_user: User | None = Depends(require_admin),
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.id == user_id).first()
@@ -827,25 +1043,37 @@ def get_delivery_note(note_id: int, db: Session = Depends(get_db)):
 )
 def create_delivery_note(payload: DeliveryNoteSaveRequest, db: Session = Depends(get_db)):
     school_id, resolved_school_name = _resolve_school_name(db, payload.school_id, payload.school_name)
-    delivery_number = generate_next_delivery_number(db)
 
-    note = DeliveryNote(
-        delivery_number=delivery_number,
-        status=payload.status,
-        school_id=school_id,
-        school_name=resolved_school_name,
-        recipient_email=payload.recipient_email,
-        cc_email=payload.cc_email.strip() if payload.cc_email else None,
-        osticket_number=payload.osticket_number,
-        ordered_by=payload.ordered_by.strip() if payload.ordered_by else None,
-        room=payload.room.strip() if payload.room else None,
-        supplier=payload.supplier.strip() if payload.supplier else None,
-        invoice_number=payload.invoice_number.strip() if payload.invoice_number else None,
-        notes=payload.notes.strip() if payload.notes else None,
-        email_osticket_status="AUSSTEHEND" if payload.osticket_number else "KEIN_TICKET",
-    )
-    db.add(note)
-    db.flush()
+    note: DeliveryNote | None = None
+    for attempt in range(5):
+        delivery_number = generate_next_delivery_number(db)
+        note = DeliveryNote(
+            delivery_number=delivery_number,
+            status=payload.status,
+            school_id=school_id,
+            school_name=resolved_school_name,
+            recipient_email=payload.recipient_email,
+            cc_email=payload.cc_email.strip() if payload.cc_email else None,
+            osticket_number=payload.osticket_number,
+            ordered_by=payload.ordered_by.strip() if payload.ordered_by else None,
+            room=payload.room.strip() if payload.room else None,
+            supplier=None,
+            invoice_number=None,
+            notes=payload.notes.strip() if payload.notes else None,
+            email_osticket_status="AUSSTEHEND" if payload.osticket_number else "KEIN_TICKET",
+        )
+        db.add(note)
+        try:
+            db.flush()
+            break
+        except IntegrityError:
+            db.rollback()
+            note = None
+            if attempt == 4:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Lieferschein-Nummer konnte wegen paralleler Zugriffe nicht eindeutig vergeben werden. Bitte erneut versuchen.",
+                )
 
     for idx, item_in in enumerate(payload.items, start=1):
         db.add(
@@ -896,8 +1124,8 @@ def update_delivery_note(note_id: int, payload: DeliveryNoteSaveRequest, db: Ses
     note.osticket_number = payload.osticket_number
     note.ordered_by = payload.ordered_by.strip() if payload.ordered_by else None
     note.room = payload.room.strip() if payload.room else None
-    note.supplier = payload.supplier.strip() if payload.supplier else None
-    note.invoice_number = payload.invoice_number.strip() if payload.invoice_number else None
+    note.supplier = None
+    note.invoice_number = None
     note.notes = payload.notes.strip() if payload.notes else None
     note.email_osticket_status = "AUSSTEHEND" if payload.osticket_number else "KEIN_TICKET"
 
@@ -967,11 +1195,6 @@ def complete_delivery_note(
     if not note.items:
         raise HTTPException(status_code=400, detail="Ein Lieferschein ohne Gerätepositionen kann nicht abgeschlossen werden.")
 
-    if payload.recipient_email and "@" in payload.recipient_email:
-        note.recipient_email = payload.recipient_email.strip()
-    if payload.cc_email is not None:
-        note.cc_email = payload.cc_email.strip() or None
-
     note.delivered_by = payload.delivered_by
     note.received_by = payload.received_by
     note.handover_notes = payload.handover_notes.strip() if payload.handover_notes else None
@@ -991,6 +1214,15 @@ def complete_delivery_note(
     db.commit()
     db.refresh(note)
     return _serialize_note(note)
+
+
+def _safe_pdf_path(note: DeliveryNote) -> Path:
+    raw_name = Path(note.pdf_filename or f"Lieferschein_{note.delivery_number}.pdf").name
+    base_dir = settings.PDF_STORAGE_DIR.resolve()
+    candidate = (base_dir / raw_name).resolve()
+    if candidate.parent != base_dir:
+        raise HTTPException(status_code=400, detail="Ungültiger PDF-Dateipfad.")
+    return candidate
 
 
 @app.post(
@@ -1014,7 +1246,7 @@ def resend_delivery_note_email(note_id: int, db: Session = Depends(get_db)):
         )
 
     cfg = get_runtime_settings(db)
-    pdf_path = settings.PDF_STORAGE_DIR / (note.pdf_filename or f"Lieferschein_{note.delivery_number}.pdf")
+    pdf_path = _safe_pdf_path(note)
     if not pdf_path.exists():
         pdf_path = generate_delivery_note_pdf(note, cfg=cfg)
         note.pdf_filename = pdf_path.name
@@ -1041,10 +1273,7 @@ def get_delivery_note_pdf(
         raise HTTPException(status_code=404, detail="Lieferschein nicht gefunden.")
 
     cfg = get_runtime_settings(db)
-    if note.pdf_filename:
-        pdf_path = settings.PDF_STORAGE_DIR / note.pdf_filename
-    else:
-        pdf_path = settings.PDF_STORAGE_DIR / f"Lieferschein_{note.delivery_number}.pdf"
+    pdf_path = _safe_pdf_path(note)
 
     if not pdf_path.exists():
         pdf_path = generate_delivery_note_pdf(note, cfg=cfg)
@@ -1073,6 +1302,15 @@ def preview_delivery_note_html(note_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Lieferschein nicht gefunden.")
     cfg = get_runtime_settings(db)
     return HTMLResponse(content=render_delivery_note_html(note, cfg=cfg))
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return Response(
+        content=_FAVICON_SVG,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get("/", response_class=HTMLResponse)

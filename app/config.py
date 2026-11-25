@@ -34,21 +34,19 @@ class Settings:
         f"sqlite:///{(Path(os.getenv('DATA_DIR', './data')).resolve() / 'lieferscheine.db').as_posix()}",
     )
 
-    # Zugriffsschutz
-    AUTH_ENABLED: bool = _str_to_bool(os.getenv("AUTH_ENABLED"), False)
-    AUTH_USERNAME: str = os.getenv("AUTH_USERNAME", "it-team")
-    AUTH_PASSWORD: str = os.getenv("AUTH_PASSWORD", "changeme123")
-    AUTH_PIN: str = os.getenv("AUTH_PIN", "1234")
+    # Verschlüsselung & Zugriffsschutz
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "").strip()
+    AUTH_ENABLED: bool = _str_to_bool(os.getenv("AUTH_ENABLED"), True)
 
-    # SMTP-Einstellungen
+    # SMTP-Initialeinstellungen
     SMTP_ENABLED: bool = _str_to_bool(os.getenv("SMTP_ENABLED"), False)
-    SMTP_HOST: str = os.getenv("SMTP_HOST", "mail.kommune.local")
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "").strip()
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
     SMTP_SECURITY: str = os.getenv("SMTP_SECURITY", "starttls").strip().lower()
-    SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "")
+    SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "").strip()
     SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
-    SMTP_FROM_EMAIL: str = os.getenv("SMTP_FROM_EMAIL", "schul-it@kommune.local")
-    SMTP_FROM_NAME: str = os.getenv("SMTP_FROM_NAME", "Schul-IT Lieferschein-System")
+    SMTP_FROM_EMAIL: str = os.getenv("SMTP_FROM_EMAIL", "").strip()
+    SMTP_FROM_NAME: str = os.getenv("SMTP_FROM_NAME", "Schul-IT Lieferschein-System").strip()
     SMTP_TIMEOUT: int = int(os.getenv("SMTP_TIMEOUT", "15"))
 
     # osTicket & globales Archiv
