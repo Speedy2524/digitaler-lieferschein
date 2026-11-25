@@ -25,10 +25,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function deliveryApp() {
   return {
+    // Design-Theme: 'erp' (ERP / Logistik-Split) | 'business' (Business Clean) | 'gmuend' (Kommunal / Gmünd CD) | 'standard' (Karten-Ansicht)
+    uiTheme: localStorage.getItem("it_ls_ui_theme") || "erp",
+
     // Navigation: 'deliveries' | 'prepare' | 'handover' | 'archive' | 'admin'
     activeTab: "deliveries",
     isLoading: false,
     isSubmitting: false,
+
+    // Ausgewählter Lieferschein im ERP-Split-View (rechts)
+    selectedSplitNote: null,
 
     // App- & Auth-Status
     authEnabled: false,
@@ -137,10 +143,21 @@ function deliveryApp() {
     },
 
     async init() {
+      this.applyTheme(this.uiTheme);
       await this.checkAuthStatus();
       if (this.authenticated) {
         await this.loadInitialData();
       }
+    },
+
+    setUiTheme(themeName) {
+      this.uiTheme = themeName;
+      localStorage.setItem("it_ls_ui_theme", themeName);
+      this.applyTheme(themeName);
+    },
+
+    applyTheme(themeName) {
+      document.documentElement.setAttribute("data-ui-theme", themeName);
     },
 
     showToast(title, message = "", type = "success") {
@@ -280,6 +297,14 @@ function deliveryApp() {
     async loadOpenNotes() {
       const q = encodeURIComponent(this.searchOpen.trim());
       this.openNotes = await this.apiFetch(`/api/delivery-notes?status=BEREIT&search=${q}`);
+      if (this.openNotes.length > 0) {
+        const stillExists =
+          this.selectedSplitNote &&
+          this.openNotes.find((n) => n.id === this.selectedSplitNote.id);
+        this.selectedSplitNote = stillExists || this.openNotes[0];
+      } else {
+        this.selectedSplitNote = null;
+      }
     },
 
     async loadDraftAndReadyNotes() {
@@ -357,13 +382,10 @@ function deliveryApp() {
 
     sanitizeOsticketInput() {
       if (!this.form.osticket_number) return;
-      // Entferne '#', Leerzeichen und nicht-numerische Zeichen
       this.form.osticket_number = this.form.osticket_number.replace(/[^\d]/g, "");
     },
 
     addItemRow(focusIndex = null) {
-      // Wenn die vorherige Zeile eine Gerätebezeichnung hat, übernehmen wir diese als Komfort-Vorschlag?
-      // Nein, leer lassen, aber Button "Typ von oben übernehmen" anbieten!
       this.form.items.push({
         device_type: "",
         inventory_number: "",
@@ -395,13 +417,6 @@ function deliveryApp() {
       this.form.items.splice(index, 1);
     },
 
-    /**
-     * Schnelle Tastatur- und USB-Barcodescanner-Navigation:
-     * Enter im Feld "Gerätebezeichnung" -> springt zu "Inventarnummer"
-     * Enter im Feld "Inventarnummer" -> springt zu "Seriennummer"
-     * Enter im Feld "Seriennummer" -> legt neue Zeile an (oder springt in nächste Zeile)
-     * Prüft KeyboardEvent.isComposing gemäß modern-web-guidance (Guide: forms).
-     */
     handleScannerEnter(event, index, field) {
       if (event.isComposing || event.keyCode === 229) {
         return;
@@ -418,7 +433,7 @@ function deliveryApp() {
         if (index === this.form.items.length - 1) {
           const currentType = this.form.items[index].device_type;
           this.form.items.push({
-            device_type: currentType, // Praktisch für Serien-Scans gleicher Geräte!
+            device_type: currentType,
             inventory_number: "",
             serial_number: "",
             quantity: 1,
@@ -693,7 +708,6 @@ function deliveryApp() {
         canvas.height = height * ratio;
         const ctx = canvas.getContext("2d");
         ctx.scale(ratio, ratio);
-        // Weißer Hintergrund für sauberen PNG-Export im PDF
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, width, height);
       };

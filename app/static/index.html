@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" data-ui-theme="erp">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,7 +15,7 @@
   <!-- Custom Styles -->
   <link rel="stylesheet" href="/static/styles.css">
 </head>
-<body class="bg-slate-100 text-slate-900 min-h-screen flex flex-col antialiased" x-data="deliveryApp()" x-init="init()">
+<body class="min-h-screen flex flex-col antialiased" x-data="deliveryApp()" x-init="init()">
 
   <!-- =====================================================================
        Toast-Benachrichtigung (aria-live="polite" für Screenreader)
@@ -23,1285 +23,1614 @@
   <div aria-live="polite" role="status" class="fixed bottom-4 right-4 z-50 max-w-md w-full px-4 pointer-events-none">
     <div x-show="toast.visible" x-cloak
          x-transition.opacity.duration.200ms
-         class="pointer-events-auto rounded-xl shadow-xl border p-4 flex items-start gap-3"
+         class="pointer-events-auto theme-card shadow-xl border p-3.5 flex items-start gap-3"
          :class="{
-           'bg-emerald-900 text-white border-emerald-700': toast.type === 'success',
-           'bg-red-900 text-white border-red-700': toast.type === 'error',
-           'bg-slate-900 text-white border-slate-700': toast.type === 'info'
+           'bg-emerald-950 text-white border-emerald-700': toast.type === 'success',
+           'bg-red-950 text-white border-red-700': toast.type === 'error',
+           'bg-zinc-900 text-white border-zinc-700': toast.type === 'info'
          }">
       <div class="flex-1">
-        <p class="font-bold text-sm" x-text="toast.title"></p>
+        <p class="font-bold text-xs font-mono uppercase tracking-wider" x-text="toast.title"></p>
         <p class="text-xs opacity-90 mt-0.5" x-show="toast.message" x-text="toast.message"></p>
       </div>
       <button type="button" @click="toast.visible = false" class="text-xs opacity-80 hover:opacity-100 px-2 py-1" aria-label="Benachrichtigung schließen">✕</button>
     </div>
   </div>
 
+  <!-- Gmünd CD Rote Kopflinie (nur sichtbar wenn Design = Kommunal / Gmünd CD) -->
+  <div x-show="uiTheme === 'gmuend'" x-cloak class="h-1.5 bg-[#C8102E] w-full"></div>
+
   <!-- =====================================================================
-       Kopfzeile & Hauptnavigation
+       TOP-HEADER (für Designs: 'business', 'gmuend', 'standard' & Mobil-Ansicht)
        ===================================================================== -->
-  <header class="bg-slate-900 text-white shadow-md sticky top-0 z-30">
+  <header x-show="uiTheme !== 'erp'" x-cloak
+          class="sticky top-0 z-30 border-b transition"
+          :class="{
+            'bg-white text-slate-900 border-slate-200': uiTheme === 'business',
+            'bg-[#1D1D1B] text-white border-stone-800': uiTheme === 'gmuend',
+            'bg-slate-900 text-white border-slate-800': uiTheme === 'standard'
+          }">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div class="flex flex-wrap items-center justify-between py-3 gap-3">
-        <!-- Logo & Abteilungsname -->
+      <div class="flex flex-wrap items-center justify-between py-2.5 gap-3">
+        <!-- Brand / Titel -->
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-lg shadow-inner" aria-hidden="true">
-            IT
+          <div x-show="uiTheme === 'gmuend'" class="w-1.5 h-7 bg-[#C8102E]" aria-hidden="true"></div>
+          <div x-show="uiTheme !== 'gmuend'" class="w-8 h-8 rounded flex items-center justify-center border"
+               :class="uiTheme === 'business' ? 'bg-slate-900 text-white border-slate-900' : 'bg-blue-600 text-white border-blue-500'"
+               aria-hidden="true">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
           </div>
           <div>
-            <h1 class="text-base sm:text-lg font-bold tracking-tight leading-tight" x-text="appTitle">Digitaler IT-Lieferschein</h1>
-            <p class="text-xs text-slate-300 hidden sm:block" x-text="departmentName">Stadtverwaltung – Schul-IT</p>
+            <h1 class="text-sm sm:text-base font-bold tracking-tight leading-tight" x-text="appTitle">Digitaler IT-Lieferschein</h1>
+            <p class="text-xs opacity-75 hidden sm:block" x-text="departmentName">Stadtverwaltung – Schul-IT</p>
           </div>
         </div>
 
-        <!-- Systemstatus-Badges & Direkt-Übergabe -->
+        <!-- Design-Auswahl & Aktionen -->
         <div class="flex items-center gap-2">
-          <span class="hidden md:inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border"
-                :class="smtpEnabled ? 'bg-emerald-950/70 text-emerald-300 border-emerald-700' : 'bg-amber-950/70 text-amber-200 border-amber-700'">
-            <span class="w-2 h-2 rounded-full" :class="smtpEnabled ? 'bg-emerald-400' : 'bg-amber-400'"></span>
-            <span x-text="smtpEnabled ? 'SMTP Aktiv' : 'SMTP Testmodus'"></span>
-          </span>
+          <div class="flex items-center gap-1.5">
+            <label for="header-theme-select" class="text-xs opacity-75 hidden md:inline">Design:</label>
+            <select id="header-theme-select"
+                    x-model="uiTheme"
+                    @change="setUiTheme($event.target.value)"
+                    aria-label="Oberflächen-Design auswählen"
+                    class="text-xs font-semibold px-2.5 py-1.5 border rounded"
+                    :class="uiTheme === 'business' ? 'bg-slate-100 text-slate-900 border-slate-300' : 'bg-zinc-800 text-white border-zinc-700'"
+                    style="min-height: 34px; font-size: 0.75rem;">
+              <option value="erp">ERP / Logistik-Split</option>
+              <option value="business">Business Clean (Lizenzmanager)</option>
+              <option value="gmuend">Kommunal / Gmünd CD</option>
+              <option value="standard">Karten-Ansicht (Standard)</option>
+            </select>
+          </div>
 
           <button type="button" @click="startDirectHandover()"
-                  class="touch-btn inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-semibold px-3.5 py-2 rounded-lg shadow transition">
-            <span aria-hidden="true">⚡</span>
-            <span>Direkt-Übergabe</span>
+                  class="touch-btn inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded border transition"
+                  :class="{
+                    'bg-[#C8102E] hover:bg-[#a50d26] text-white border-[#C8102E]': uiTheme === 'gmuend',
+                    'bg-slate-900 hover:bg-slate-800 text-white border-slate-900': uiTheme === 'business',
+                    'bg-blue-600 hover:bg-blue-500 text-white border-blue-600': uiTheme === 'standard'
+                  }"
+                  style="min-height: 34px;">
+            <span>+ Direkt-Übergabe</span>
           </button>
 
           <button type="button" x-show="authEnabled && authenticated" x-cloak @click="logout()"
-                  class="text-xs text-slate-300 hover:text-white px-2.5 py-2 rounded-lg border border-slate-700">
+                  class="text-xs px-2.5 py-1.5 rounded border opacity-80 hover:opacity-100"
+                  style="min-height: 34px;">
             Abmelden
           </button>
         </div>
       </div>
 
-      <!-- Navigations-Tabs -->
-      <nav aria-label="Hauptnavigation" class="flex overflow-x-auto border-t border-slate-800 -mx-4 px-4 sm:mx-0 sm:px-0 gap-1">
+      <!-- Horizontaler Tab-Streifen -->
+      <nav aria-label="Hauptnavigation" class="flex overflow-x-auto border-t -mx-4 px-4 sm:mx-0 sm:px-0 gap-1"
+           :class="uiTheme === 'business' ? 'border-slate-200' : 'border-zinc-800'">
         <button type="button"
                 @click="switchTab('deliveries')"
                 :aria-current="activeTab === 'deliveries' ? 'page' : null"
-                class="flex items-center gap-2 px-4 py-3 text-sm font-semibold border-b-2 whitespace-nowrap transition"
-                :class="activeTab === 'deliveries' ? 'border-blue-400 text-white bg-slate-800/60' : 'border-transparent text-slate-300 hover:text-white hover:bg-slate-800/30'">
+                class="flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold border-b-2 whitespace-nowrap transition"
+                :class="activeTab === 'deliveries'
+                  ? (uiTheme === 'gmuend' ? 'border-[#C8102E] text-white' : (uiTheme === 'business' ? 'border-slate-900 text-slate-900' : 'border-blue-400 text-white'))
+                  : 'border-transparent opacity-70 hover:opacity-100'">
           <span>Offene Auslieferungen</span>
-          <span class="inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold rounded-full"
-                :class="stats.ready > 0 ? 'bg-blue-500 text-white' : 'bg-slate-700 text-slate-300'"
+          <span class="inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-mono font-bold rounded"
+                :class="uiTheme === 'business' ? 'bg-slate-200 text-slate-800' : 'bg-zinc-700 text-white'"
                 x-text="stats.ready">0</span>
         </button>
 
         <button type="button"
                 @click="switchTab('prepare')"
                 :aria-current="activeTab === 'prepare' ? 'page' : null"
-                class="flex items-center gap-2 px-4 py-3 text-sm font-semibold border-b-2 whitespace-nowrap transition"
-                :class="activeTab === 'prepare' ? 'border-blue-400 text-white bg-slate-800/60' : 'border-transparent text-slate-300 hover:text-white hover:bg-slate-800/30'">
+                class="flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold border-b-2 whitespace-nowrap transition"
+                :class="activeTab === 'prepare'
+                  ? (uiTheme === 'gmuend' ? 'border-[#C8102E] text-white' : (uiTheme === 'business' ? 'border-slate-900 text-slate-900' : 'border-blue-400 text-white'))
+                  : 'border-transparent opacity-70 hover:opacity-100'">
           <span>Vorbereiten / Neu</span>
           <span x-show="stats.draft > 0" x-cloak
-                class="inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold rounded-full bg-amber-500 text-slate-950"
-                x-text="stats.draft + ' Entwurf'"></span>
+                class="inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-mono font-bold rounded bg-amber-500 text-zinc-950"
+                x-text="stats.draft"></span>
         </button>
 
         <button type="button"
                 @click="switchTab('archive')"
                 :aria-current="activeTab === 'archive' ? 'page' : null"
-                class="flex items-center gap-2 px-4 py-3 text-sm font-semibold border-b-2 whitespace-nowrap transition"
-                :class="activeTab === 'archive' ? 'border-blue-400 text-white bg-slate-800/60' : 'border-transparent text-slate-300 hover:text-white hover:bg-slate-800/30'">
+                class="flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold border-b-2 whitespace-nowrap transition"
+                :class="activeTab === 'archive'
+                  ? (uiTheme === 'gmuend' ? 'border-[#C8102E] text-white' : (uiTheme === 'business' ? 'border-slate-900 text-slate-900' : 'border-blue-400 text-white'))
+                  : 'border-transparent opacity-70 hover:opacity-100'">
           <span>Archiv</span>
-          <span class="inline-flex items-center justify-center px-2 py-0.5 text-xs font-semibold rounded-full bg-slate-700 text-slate-200"
+          <span class="inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-mono rounded"
+                :class="uiTheme === 'business' ? 'bg-slate-200 text-slate-700' : 'bg-zinc-700 text-zinc-200'"
                 x-text="stats.completed">0</span>
-          <span x-show="stats.email_errors > 0" x-cloak
-                class="inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold rounded-full bg-red-500 text-white"
-                title="Lieferscheine mit E-Mail-Versandfehler"
-                x-text="stats.email_errors + ' Fehler'"></span>
         </button>
 
         <button type="button"
                 @click="switchTab('admin')"
                 :aria-current="activeTab === 'admin' ? 'page' : null"
-                class="flex items-center gap-2 px-4 py-3 text-sm font-semibold border-b-2 whitespace-nowrap transition"
-                :class="activeTab === 'admin' ? 'border-blue-400 text-white bg-slate-800/60' : 'border-transparent text-slate-300 hover:text-white hover:bg-slate-800/30'">
-          <span>Verwaltung</span>
+                class="flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold border-b-2 whitespace-nowrap transition"
+                :class="activeTab === 'admin'
+                  ? (uiTheme === 'gmuend' ? 'border-[#C8102E] text-white' : (uiTheme === 'business' ? 'border-slate-900 text-slate-900' : 'border-blue-400 text-white'))
+                  : 'border-transparent opacity-70 hover:opacity-100'">
+          <span>Stammdaten</span>
         </button>
       </nav>
     </div>
   </header>
 
   <!-- =====================================================================
-       Hauptinhalt
+       WORKSPACE-WRAPPER (Im ERP-Modus mit dunkler linker Logistik-Sidebar)
        ===================================================================== -->
-  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+  <div class="flex-1 flex flex-col lg:flex-row">
 
     <!-- ===================================================================
-         TAB 1: OFFENE AUSLIEFERUNGEN (Mobile-First Kartenübersicht)
+         ERP / LOGISTIK-SPLIT SIDEBAR (Nur sichtbar wenn uiTheme === 'erp')
          =================================================================== -->
-    <section x-show="activeTab === 'deliveries'" x-cloak aria-labelledby="heading-open-deliveries">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div>
-          <h2 id="heading-open-deliveries" class="text-xl sm:text-2xl font-bold text-slate-900">
-            Offene Auslieferungen
-          </h2>
-          <p class="text-sm text-slate-600 mt-0.5">
-            Vorbereitete Lieferscheine im Status <strong class="text-blue-700">BEREIT</strong> – zum Quittieren vor Ort an der Schule antippen.
-          </p>
+    <aside x-show="uiTheme === 'erp'" x-cloak
+           class="bg-[#18181B] text-zinc-200 lg:w-60 shrink-0 border-b lg:border-b-0 lg:border-r border-zinc-800 flex flex-col justify-between">
+      <div>
+        <!-- Terminal-Kopf -->
+        <div class="p-4 border-b border-zinc-800 flex items-center justify-between lg:block">
+          <div>
+            <div class="font-mono font-bold text-xs tracking-wider text-white flex items-center gap-2">
+              <span class="w-2 h-2 bg-emerald-400 inline-block"></span>
+              <span>SCHUL-IT // LOGISTIK</span>
+            </div>
+            <div class="font-mono text-[11px] text-zinc-400 mt-0.5">WARENAUSGANG &amp; BELEGE</div>
+          </div>
+
+          <!-- Mobiler Schnell-Button für Direkt-Übergabe -->
+          <button type="button" @click="startDirectHandover()"
+                  class="lg:hidden font-mono text-xs font-bold bg-zinc-800 hover:bg-zinc-700 text-white px-2.5 py-1.5 border border-zinc-600">
+            + DIREKT-ÜBERGABE
+          </button>
         </div>
-        <div class="flex flex-wrap items-center gap-2">
+
+        <!-- ERP-Navigationsmenü -->
+        <nav aria-label="ERP Navigation" class="p-2 flex lg:flex-col overflow-x-auto gap-1">
+          <button type="button"
+                  @click="switchTab('deliveries')"
+                  class="w-full text-left px-3 py-2.5 text-xs font-mono flex items-center justify-between gap-2 transition whitespace-nowrap"
+                  :class="activeTab === 'deliveries' ? 'bg-zinc-800 text-white font-bold border-l-2 border-sky-400' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'">
+            <span>01. AUSLIEFERUNG</span>
+            <span class="px-1.5 py-0.5 text-[11px] bg-zinc-900 border border-zinc-700 text-sky-300" x-text="'[' + stats.ready + ']'">[0]</span>
+          </button>
+
+          <button type="button"
+                  @click="switchTab('prepare')"
+                  class="w-full text-left px-3 py-2.5 text-xs font-mono flex items-center justify-between gap-2 transition whitespace-nowrap"
+                  :class="activeTab === 'prepare' ? 'bg-zinc-800 text-white font-bold border-l-2 border-sky-400' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'">
+            <span>02. BELEG-ERFASSUNG</span>
+            <span x-show="stats.draft > 0" class="px-1.5 py-0.5 text-[11px] bg-amber-950 border border-amber-700 text-amber-300" x-text="'[' + stats.draft + ']'"></span>
+          </button>
+
+          <button type="button"
+                  @click="switchTab('archive')"
+                  class="w-full text-left px-3 py-2.5 text-xs font-mono flex items-center justify-between gap-2 transition whitespace-nowrap"
+                  :class="activeTab === 'archive' ? 'bg-zinc-800 text-white font-bold border-l-2 border-sky-400' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'">
+            <span>03. BELEG-ARCHIV</span>
+            <span class="px-1.5 py-0.5 text-[11px] bg-zinc-900 border border-zinc-700 text-zinc-300" x-text="'[' + stats.completed + ']'">[0]</span>
+          </button>
+
+          <button type="button"
+                  @click="switchTab('admin')"
+                  class="w-full text-left px-3 py-2.5 text-xs font-mono flex items-center justify-between gap-2 transition whitespace-nowrap"
+                  :class="activeTab === 'admin' ? 'bg-zinc-800 text-white font-bold border-l-2 border-sky-400' : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'">
+            <span>04. STAMMDATEN</span>
+          </button>
+        </nav>
+
+        <!-- Schnellaktionen (Desktop Sidebar) -->
+        <div class="hidden lg:block p-3 border-t border-zinc-800 space-y-2">
           <button type="button" @click="startNewPrepare()"
-                  class="touch-btn inline-flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-slate-800 font-semibold text-sm px-4 py-2.5 rounded-xl border border-slate-300 shadow-sm">
-            <span>+ Im Büro vorbereiten</span>
+                  class="w-full font-mono text-xs font-bold bg-zinc-100 hover:bg-white text-zinc-950 py-2 px-3 text-left flex items-center justify-between">
+            <span>+ NEUER LIEFERSCHEIN</span>
+            <span>→</span>
           </button>
           <button type="button" @click="startDirectHandover()"
-                  class="touch-btn inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-4 py-2.5 rounded-xl shadow-sm">
-            <span>⚡ Direkt-Übergabe vor Ort</span>
+                  class="w-full font-mono text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-100 py-2 px-3 border border-zinc-700 text-left flex items-center justify-between">
+            <span>+ DIREKT-ÜBERGABE</span>
+            <span>→</span>
           </button>
         </div>
       </div>
 
-      <!-- Such- und Filterleiste im semantischen <search>-Element (Guide: forms) -->
-      <search class="mb-6 block">
-        <form @submit.prevent="loadOpenNotes()" action="/api/delivery-notes" method="GET" class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
-          <div class="flex-1">
-            <label for="search-open-input" class="block text-xs font-semibold text-slate-600 mb-1">
-              Nach Schule, Inventarnummer, Besteller oder osTicket-Nummer filtern
-            </label>
-            <input type="search"
-                   id="search-open-input"
-                   name="search"
-                   x-model="searchOpen"
-                   @input.debounce.250ms="loadOpenNotes()"
-                   autocorrect="off"
-                   autocapitalize="none"
-                   spellcheck="false"
-                   enterkeyhint="search"
-                   placeholder="z. B. Musterschule, INV-2026-1041 oder 382814 …"
-                   class="w-full rounded-lg border border-slate-300 px-3.5 py-2 text-slate-900 placeholder-slate-400">
-          </div>
-          <div class="flex items-end gap-2 sm:pt-5">
-            <button type="submit" class="touch-btn bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm px-5 py-2.5 rounded-lg">
-              Filtern
-            </button>
-            <button type="button" x-show="searchOpen" @click="searchOpen = ''; loadOpenNotes()"
-                    class="touch-btn bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm px-3.5 py-2.5 rounded-lg">
-              Zurücksetzen
-            </button>
-          </div>
-        </form>
-      </search>
+      <!-- Sidebar Footer: Design-Umschalter & System-Telemetrie -->
+      <div class="p-3 border-t border-zinc-800 space-y-3 bg-zinc-950/60">
+        <div>
+          <label for="erp-theme-select" class="block font-mono text-[10px] uppercase tracking-wider text-zinc-400 mb-1">
+            Ansicht / Design-Modus
+          </label>
+          <select id="erp-theme-select"
+                  x-model="uiTheme"
+                  @change="setUiTheme($event.target.value)"
+                  class="w-full bg-zinc-900 text-zinc-100 border border-zinc-700 font-mono text-xs px-2 py-1.5"
+                  style="min-height: 34px; font-size: 0.75rem;">
+            <option value="erp">3. ERP / Logistik-Split</option>
+            <option value="business">2. Business Clean</option>
+            <option value="gmuend">1. Kommunal / Gmünd CD</option>
+            <option value="standard">4. Karten-Ansicht</option>
+          </select>
+        </div>
 
-      <!-- Leerzustand -->
-      <div x-show="openNotes.length === 0" class="bg-white rounded-2xl border border-slate-200 p-10 text-center shadow-sm">
-        <p class="text-lg font-bold text-slate-800">Keine offenen Auslieferungen gefunden</p>
-        <p class="text-sm text-slate-600 mt-1 max-w-md mx-auto">
-          Aktuell befinden sich keine Lieferscheine im Status „BEREIT“ (oder der Suchfilter lieferte keine Treffer).
-        </p>
-        <div class="mt-5 flex flex-wrap justify-center gap-3">
-          <button type="button" @click="startNewPrepare()" class="touch-btn bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold px-5 py-2.5 rounded-xl">
-            Neuen Lieferschein vorbereiten
-          </button>
-          <button type="button" @click="startDirectHandover()" class="touch-btn bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl">
-            ⚡ Direkt-Übergabe starten
-          </button>
+        <div class="hidden lg:block font-mono text-[11px] text-zinc-400 space-y-1 pt-2 border-t border-zinc-800/80">
+          <div class="flex justify-between">
+            <span>SMTP-RELAY:</span>
+            <span :class="smtpEnabled ? 'text-emerald-400' : 'text-amber-400'"
+                  x-text="smtpEnabled ? 'ONLINE' : 'SIMULATION'"></span>
+          </div>
+          <div class="flex justify-between">
+            <span>OSTICKET:</span>
+            <span :class="osticketConfigured ? 'text-emerald-400' : 'text-zinc-500'"
+                  x-text="osticketConfigured ? 'AKTIV' : 'AUS'"></span>
+          </div>
+          <div class="flex justify-between">
+            <span>BARCODE-HID:</span>
+            <span class="text-sky-400">BEREIT</span>
+          </div>
         </div>
       </div>
-
-      <!-- Karten-Grid der offenen Lieferscheine -->
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" x-show="openNotes.length > 0">
-        <template x-for="note in openNotes" :key="note.id">
-          <article class="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition flex flex-col justify-between overflow-hidden">
-            <div class="p-5">
-              <!-- Kopfzeile der Karte -->
-              <div class="flex items-start justify-between gap-2 mb-3">
-                <div>
-                  <span class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-md bg-blue-100 text-blue-800">
-                    Bereit zur Auslieferung
-                  </span>
-                  <p class="text-xs font-mono text-slate-500 mt-1.5">
-                    <span x-text="note.delivery_number"></span> · <span x-text="formatDate(note.created_at)"></span>
-                  </p>
-                </div>
-                <span x-show="note.osticket_number"
-                      class="inline-flex items-center text-xs font-mono font-bold px-2.5 py-1 rounded-md bg-sky-50 text-sky-800 border border-sky-200"
-                      x-text="'#' + note.osticket_number"></span>
-              </div>
-
-              <!-- Schulname -->
-              <h3 class="text-lg font-bold text-slate-900 leading-snug mb-2" x-text="note.school_name"></h3>
-
-              <!-- Metadaten (Besteller, Raum, Anzahl Geräte) -->
-              <dl class="text-sm text-slate-700 space-y-1 mb-4">
-                <div class="flex justify-between">
-                  <dt class="text-slate-500">Geräte gesamt:</dt>
-                  <dd class="font-bold text-slate-900" x-text="note.total_quantity + ' Einheit(en) (' + note.items.length + ' Pos.)'"></dd>
-                </div>
-                <div class="flex justify-between" x-show="note.ordered_by">
-                  <dt class="text-slate-500">Besteller/in:</dt>
-                  <dd class="font-medium text-right" x-text="note.ordered_by"></dd>
-                </div>
-                <div class="flex justify-between" x-show="note.room">
-                  <dt class="text-slate-500">Raum / Ort:</dt>
-                  <dd class="font-medium text-right" x-text="note.room"></dd>
-                </div>
-              </dl>
-
-              <!-- Vorschau der Geräte mit Inventarnummern -->
-              <div class="bg-slate-50 rounded-xl p-3 border border-slate-200/80 mb-3">
-                <p class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Geräte &amp; Inventarnummern</p>
-                <ul class="space-y-1.5 text-xs">
-                  <template x-for="item in note.items" :key="item.id">
-                    <li class="flex items-start justify-between gap-2">
-                      <span class="font-medium text-slate-800 line-clamp-1" x-text="item.quantity + '× ' + item.device_type"></span>
-                      <span class="font-mono font-bold text-blue-700 whitespace-nowrap" x-text="item.inventory_number"></span>
-                    </li>
-                  </template>
-                </ul>
-              </div>
-
-              <!-- Notiz (falls vorhanden) -->
-              <div x-show="note.notes" class="bg-amber-50 border-l-4 border-amber-400 p-2.5 rounded-r-lg text-xs text-amber-950">
-                <strong class="font-semibold">Hinweis:</strong>
-                <span x-text="note.notes"></span>
-              </div>
-            </div>
-
-            <!-- Aktionsleiste unten -->
-            <div class="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
-              <button type="button"
-                      @click="editExistingNote(note)"
-                      class="touch-btn text-xs font-semibold text-slate-600 hover:text-slate-900 px-3 py-2 rounded-lg hover:bg-slate-200/60">
-                Bearbeiten
-              </button>
-              <button type="button"
-                      @click="openHandoverView(note)"
-                      class="touch-btn flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2.5 rounded-xl shadow-sm transition text-center">
-                Vor Ort übergeben &amp; quittieren →
-              </button>
-            </div>
-          </article>
-        </template>
-      </div>
-    </section>
+    </aside>
 
     <!-- ===================================================================
-         TAB 2: VORBEREITEN / NEU (Desktop- & Scanner-optimiert)
+         HAUPTINHALT
          =================================================================== -->
-    <section x-show="activeTab === 'prepare'" x-cloak aria-labelledby="heading-prepare-form">
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5">
 
-        <!-- Linke Hauptspalte (2/3): Formular -->
-        <div class="lg:col-span-2">
-          <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 sm:p-7">
-            <div class="flex flex-wrap items-center justify-between gap-3 pb-4 mb-6 border-b border-slate-200">
-              <div>
-                <span x-show="directHandoverMode"
-                      class="inline-block text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-md bg-blue-100 text-blue-800 mb-1">
-                  ⚡ Direkt-Übergabe vor Ort
-                </span>
-                <h2 id="heading-prepare-form" class="text-xl font-bold text-slate-900"
-                    x-text="form.id ? ('Lieferschein ' + form.delivery_number + ' bearbeiten') : (directHandoverMode ? 'Direkt-Übergabe erfassen' : 'Neuen Lieferschein vorbereiten')">
-                </h2>
-                <p class="text-xs sm:text-sm text-slate-600 mt-0.5">
-                  Tipp: Mit einem USB-Barcodescanner oder der <kbd class="px-1.5 py-0.5 bg-slate-100 border rounded text-xs">Enter</kbd>-Taste springen Sie automatisch ins nächste Gerätefeld.
-                </p>
-              </div>
-              <button type="button" x-show="form.id || directHandoverMode" @click="resetPrepareForm(false)"
-                      class="text-xs font-semibold text-slate-600 hover:text-slate-900 px-3 py-2 rounded-lg border border-slate-300">
-                Neu / Zurücksetzen
+      <!-- =================================================================
+           TAB 1: OFFENE AUSLIEFERUNGEN
+           - Im ERP- / Business- / Gmünd-Modus: Split-Terminal (Links Tabelle, Rechts Direkt-Vorschau & Übergabe)
+           - Im Standard-Modus: Karten-Grid
+           ================================================================= -->
+      <section x-show="activeTab === 'deliveries'" x-cloak aria-labelledby="heading-open-deliveries">
+        <!-- Kopfleiste -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-zinc-300">
+          <div>
+            <h2 id="heading-open-deliveries"
+                class="text-lg sm:text-xl font-bold tracking-tight"
+                :class="uiTheme === 'erp' ? 'font-mono uppercase' : ''">
+              Offene Auslieferungen (Status: BEREIT)
+            </h2>
+            <p class="text-xs text-zinc-600 mt-0.5">
+              Vorbereitete Lieferscheine zur Vor-Ort-Übergabe und digitalen Unterschrift an der Schule.
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" @click="startNewPrepare()"
+                    class="touch-btn bg-white hover:bg-zinc-50 text-zinc-900 font-semibold text-xs px-3.5 py-2 border border-zinc-300">
+              + Im Büro vorbereiten
+            </button>
+            <button type="button" @click="startDirectHandover()"
+                    class="touch-btn text-white font-semibold text-xs px-3.5 py-2 border transition"
+                    :class="uiTheme === 'gmuend' ? 'bg-[#C8102E] hover:bg-[#a50d26] border-[#C8102E]' : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-900'">
+              + Direkt-Übergabe vor Ort
+            </button>
+          </div>
+        </div>
+
+        <!-- Such- und Filterleiste im semantischen <search>-Element (Guide: forms) -->
+        <search class="mb-4 block">
+          <form @submit.prevent="loadOpenNotes()" action="/api/delivery-notes" method="GET"
+                class="theme-card bg-white p-3 border border-zinc-300 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+            <div class="flex-1">
+              <label for="search-open-input" class="block text-xs font-semibold text-zinc-600 mb-1"
+                     :class="uiTheme === 'erp' ? 'font-mono uppercase' : ''">
+                Filterung nach Schule, Inventarnummer, Besteller oder osTicket-Nr.
+              </label>
+              <input type="search"
+                     id="search-open-input"
+                     name="search"
+                     x-model="searchOpen"
+                     @input.debounce.250ms="loadOpenNotes()"
+                     autocorrect="off"
+                     autocapitalize="none"
+                     spellcheck="false"
+                     enterkeyhint="search"
+                     placeholder="z. B. Musterschule, INV-2026-1041 oder 382814 …"
+                     class="w-full border border-zinc-300 px-3 py-1.5 text-sm text-zinc-900 placeholder-zinc-400">
+            </div>
+            <div class="flex items-end gap-2 sm:pt-5">
+              <button type="submit" class="touch-btn bg-zinc-900 hover:bg-zinc-800 text-white font-semibold text-xs px-4 py-2">
+                Filtern
+              </button>
+              <button type="button" x-show="searchOpen" @click="searchOpen = ''; loadOpenNotes()"
+                      class="touch-btn bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-medium text-xs px-3 py-2 border border-zinc-300">
+                Zurücksetzen
               </button>
             </div>
+          </form>
+        </search>
 
-            <!-- Fehlermeldung -->
-            <div x-show="formError" role="alert" class="mb-6 bg-red-50 border-l-4 border-red-600 p-4 rounded-r-xl text-sm text-red-900">
-              <p class="font-bold">Bitte Eingaben prüfen:</p>
-              <p x-text="formError"></p>
+        <!-- Leerzustand -->
+        <div x-show="openNotes.length === 0" class="theme-card bg-white border border-zinc-300 p-8 text-center">
+          <p class="text-base font-bold text-zinc-800">Keine offenen Auslieferungen im Status „BEREIT“</p>
+          <p class="text-xs text-zinc-600 mt-1 max-w-md mx-auto">
+            Legen Sie im Büro einen neuen Lieferschein an oder starten Sie vor Ort eine Direkt-Übergabe.
+          </p>
+          <div class="mt-4 flex flex-wrap justify-center gap-2">
+            <button type="button" @click="startNewPrepare()" class="touch-btn bg-zinc-900 text-white text-xs font-semibold px-4 py-2">
+              + Lieferschein vorbereiten
+            </button>
+            <button type="button" @click="startDirectHandover()" class="touch-btn bg-sky-700 text-white text-xs font-semibold px-4 py-2">
+              + Direkt-Übergabe starten
+            </button>
+          </div>
+        </div>
+
+        <!-- ===============================================================
+             VARIANTE A: ERP / LOGISTIK-SPLIT-VIEW (Wenn uiTheme !== 'standard')
+             Links: Kompakte Warenausgangs-Tabelle | Rechts: Sofort-Belegvorschau & Übergabe-Start
+             =============================================================== -->
+        <div x-show="openNotes.length > 0 && uiTheme !== 'standard'"
+             class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+
+          <!-- Linke Spalte (7/12): Warenausgangs-Liste -->
+          <div class="lg:col-span-7 theme-card bg-white border border-zinc-300 overflow-hidden">
+            <div class="px-3.5 py-2.5 bg-zinc-100 border-b border-zinc-300 flex items-center justify-between">
+              <span class="text-xs font-bold uppercase tracking-wider text-zinc-700"
+                    :class="uiTheme === 'erp' ? 'font-mono' : ''">
+                Warteschlange Warenausgang (<span x-text="openNotes.length"></span>)
+              </span>
+              <span class="text-[11px] text-zinc-500">Zeile anklicken für Details / Quittierung</span>
             </div>
 
-            <form @submit.prevent="saveDeliveryNote('BEREIT', directHandoverMode)"
-                  action="/api/delivery-notes"
-                  method="POST"
-                  aria-labelledby="heading-prepare-form"
-                  novalidate>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-xs sm:text-sm">
+                <thead>
+                  <tr class="bg-zinc-50 border-b border-zinc-300 text-[11px] uppercase text-zinc-600"
+                      :class="uiTheme === 'erp' ? 'font-mono' : ''">
+                    <th class="py-2.5 px-3">Beleg-Nr.</th>
+                    <th class="py-2.5 px-3">Schule / Einrichtung</th>
+                    <th class="py-2.5 px-3">osTicket</th>
+                    <th class="py-2.5 px-3">Umfang</th>
+                    <th class="py-2.5 px-3 text-right">Aktion</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-zinc-200">
+                  <template x-for="note in openNotes" :key="note.id">
+                    <tr @click="selectedSplitNote = note"
+                        class="cursor-pointer transition"
+                        :class="selectedSplitNote && selectedSplitNote.id === note.id
+                          ? (uiTheme === 'gmuend' ? 'bg-red-50/70 border-l-4 border-l-[#C8102E]' : 'bg-sky-50/80 border-l-4 border-l-zinc-900')
+                          : 'hover:bg-zinc-50'">
+                      <td class="py-3 px-3 font-mono font-bold text-zinc-900 whitespace-nowrap">
+                        <span x-text="note.delivery_number"></span>
+                        <span class="block text-[11px] font-normal text-zinc-500" x-text="formatDate(note.created_at)"></span>
+                      </td>
+                      <td class="py-3 px-3">
+                        <div class="font-bold text-zinc-900" x-text="note.school_name"></div>
+                        <div class="text-xs text-zinc-500" x-show="note.ordered_by || note.room">
+                          <span x-text="note.ordered_by || ''"></span>
+                          <span x-show="note.ordered_by && note.room"> · </span>
+                          <span x-text="note.room || ''"></span>
+                        </div>
+                      </td>
+                      <td class="py-3 px-3 font-mono text-xs">
+                        <span x-show="note.osticket_number"
+                              class="px-1.5 py-0.5 bg-zinc-100 border border-zinc-300 font-bold text-zinc-800"
+                              x-text="'#' + note.osticket_number"></span>
+                        <span x-show="!note.osticket_number" class="text-zinc-400">–</span>
+                      </td>
+                      <td class="py-3 px-3 font-mono text-xs whitespace-nowrap">
+                        <strong x-text="note.total_quantity + ' Einh.'"></strong>
+                        <span class="text-zinc-500 block" x-text="'(' + note.items.length + ' Pos.)'"></span>
+                      </td>
+                      <td class="py-3 px-3 text-right whitespace-nowrap">
+                        <button type="button"
+                                @click.stop="openHandoverView(note)"
+                                class="text-xs font-bold px-3 py-1.5 text-white transition"
+                                :class="uiTheme === 'gmuend' ? 'bg-[#C8102E] hover:bg-[#a50d26]' : 'bg-zinc-900 hover:bg-zinc-800'">
+                          Quittieren →
+                        </button>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
 
-              <!-- 1. Schule & E-Mail-Empfänger -->
-              <fieldset class="mb-7 border border-slate-200 rounded-xl p-4 sm:p-5 bg-slate-50/50">
-                <legend class="text-sm font-bold uppercase tracking-wider text-slate-700 px-2">
-                  1. Empfängerschule &amp; E-Mail-Zustellung
-                </legend>
-
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
-                  <div class="sm:col-span-2">
-                    <label for="prep-school" class="block text-sm font-semibold text-slate-800 mb-1">
-                      Schule auswählen <span class="text-red-600" aria-hidden="true">*</span>
-                    </label>
-                    <select id="prep-school"
-                            name="school_id"
-                            x-model="form.school_id"
-                            @change="onSchoolChange()"
-                            required
-                            class="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-slate-900">
-                      <option value="">— Bitte Schule auswählen —</option>
-                      <template x-for="school in schools.filter(s => s.active || s.id == form.school_id)" :key="school.id">
-                        <option :value="school.id" x-text="school.name + (school.short_code ? ' (' + school.short_code + ')' : '')"></option>
-                      </template>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label for="prep-email" class="block text-sm font-semibold text-slate-800 mb-1">
-                      E-Mail Schulsekretariat <span class="text-red-600" aria-hidden="true">*</span>
-                    </label>
-                    <input type="email"
-                           id="prep-email"
-                           name="recipient_email"
-                           x-model="form.recipient_email"
-                           required
-                           autocomplete="email"
-                           autocorrect="off"
-                           autocapitalize="none"
-                           spellcheck="false"
-                           aria-describedby="prep-email-help"
-                           placeholder="sekretariat@schule.local"
-                           class="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-slate-900">
-                    <span id="prep-email-help" class="block text-xs text-slate-500 mt-1">
-                      Wird bei Schulauswahl vorausgefüllt, bleibt aber überschreibbar.
-                    </span>
-                  </div>
-
-                  <div>
-                    <label for="prep-cc-email" class="block text-sm font-semibold text-slate-800 mb-1">
-                      Optionale CC-Empfänger (z. B. Schulleitung / IT-Lehrkraft)
-                    </label>
-                    <input type="email"
-                           id="prep-cc-email"
-                           name="cc_email"
-                           x-model="form.cc_email"
-                           autocomplete="email"
-                           autocorrect="off"
-                           autocapitalize="none"
-                           spellcheck="false"
-                           placeholder="optional@schule.local"
-                           class="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-slate-900">
-                  </div>
+          <!-- Rechte Spalte (5/12): Live-Beleginspektor im Split-View -->
+          <div class="lg:col-span-5 theme-card bg-white border border-zinc-300 p-4 sm:p-5" x-show="selectedSplitNote">
+            <div class="flex items-start justify-between gap-2 pb-3 mb-3 border-b-2 border-zinc-900">
+              <div>
+                <div class="font-mono text-xs uppercase text-zinc-500">
+                  BELEG-VORSCHAU // <span class="font-bold text-zinc-900" x-text="selectedSplitNote?.delivery_number"></span>
                 </div>
-              </fieldset>
+                <h3 class="text-lg font-bold text-zinc-900 mt-0.5" x-text="selectedSplitNote?.school_name"></h3>
+              </div>
+              <span x-show="selectedSplitNote?.osticket_number"
+                    class="font-mono text-xs font-bold px-2 py-1 bg-zinc-900 text-white"
+                    x-text="'TICKET #' + selectedSplitNote?.osticket_number"></span>
+            </div>
 
-              <!-- 2. Stammdaten & Referenzen -->
-              <fieldset class="mb-7 border border-slate-200 rounded-xl p-4 sm:p-5 bg-slate-50/50">
-                <legend class="text-sm font-bold uppercase tracking-wider text-slate-700 px-2">
-                  2. Stammdaten &amp; Ticket-Referenzen (Optional)
-                </legend>
+            <!-- Metadaten-Grid -->
+            <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-xs mb-4 bg-zinc-50 p-3 border border-zinc-200">
+              <div>
+                <dt class="text-zinc-500 uppercase font-mono text-[10px]">E-Mail Sekretariat</dt>
+                <dd class="font-medium text-zinc-900 truncate" x-text="selectedSplitNote?.recipient_email"></dd>
+              </div>
+              <div>
+                <dt class="text-zinc-500 uppercase font-mono text-[10px]">Erstellt am</dt>
+                <dd class="font-mono text-zinc-900" x-text="formatDate(selectedSplitNote?.created_at)"></dd>
+              </div>
+              <div x-show="selectedSplitNote?.ordered_by">
+                <dt class="text-zinc-500 uppercase font-mono text-[10px]">Besteller / Ansprechp.</dt>
+                <dd class="font-medium text-zinc-900" x-text="selectedSplitNote?.ordered_by"></dd>
+              </div>
+              <div x-show="selectedSplitNote?.room">
+                <dt class="text-zinc-500 uppercase font-mono text-[10px]">Aufstellort / Raum</dt>
+                <dd class="font-medium text-zinc-900" x-text="selectedSplitNote?.room"></dd>
+              </div>
+            </dl>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
+            <!-- Positionstabelle im Inspektor -->
+            <div class="mb-4">
+              <div class="font-mono text-[11px] font-bold uppercase text-zinc-600 mb-1.5">
+                GERÄTEPOSITIONEN (<span x-text="selectedSplitNote?.total_quantity"></span> EINHEITEN)
+              </div>
+              <table class="w-full text-xs border border-zinc-300 border-collapse">
+                <thead>
+                  <tr class="bg-zinc-100 border-b border-zinc-300 font-mono text-[10px] uppercase text-left">
+                    <th class="py-1.5 px-2">Pos</th>
+                    <th class="py-1.5 px-2">Bezeichnung</th>
+                    <th class="py-1.5 px-2">Inventar-Nr.</th>
+                    <th class="py-1.5 px-2 text-center">Menge</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-zinc-200">
+                  <template x-for="(item, idx) in (selectedSplitNote?.items || [])" :key="item.id">
+                    <tr>
+                      <td class="py-1.5 px-2 font-mono text-zinc-500" x-text="String(idx + 1).padStart(2, '0')"></td>
+                      <td class="py-1.5 px-2 font-medium text-zinc-900">
+                        <span x-text="item.device_type"></span>
+                        <span x-show="item.serial_number" class="block font-mono text-[10px] text-zinc-500" x-text="'S/N: ' + item.serial_number"></span>
+                      </td>
+                      <td class="py-1.5 px-2 font-mono font-bold text-zinc-900" x-text="item.inventory_number"></td>
+                      <td class="py-1.5 px-2 font-mono font-bold text-center" x-text="item.quantity"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Hinweis -->
+            <div x-show="selectedSplitNote?.notes" class="mb-4 p-2.5 bg-amber-50 border border-amber-300 border-l-4 border-l-amber-500 text-xs text-amber-950">
+              <strong class="font-mono uppercase text-[10px] block text-amber-800">HINWEIS AUS DER VORBEREITUNG:</strong>
+              <span x-text="selectedSplitNote?.notes"></span>
+            </div>
+
+            <!-- Aktions-Buttons -->
+            <div class="flex items-center gap-2 pt-3 border-t border-zinc-200">
+              <button type="button"
+                      @click="editExistingNote(selectedSplitNote)"
+                      class="touch-btn px-3.5 py-2.5 border border-zinc-300 bg-white hover:bg-zinc-100 text-xs font-semibold text-zinc-800">
+                Beleg bearbeiten
+              </button>
+              <button type="button"
+                      @click="openHandoverView(selectedSplitNote)"
+                      class="touch-btn flex-1 py-2.5 px-4 text-white text-xs sm:text-sm font-bold transition text-center"
+                      :class="uiTheme === 'gmuend' ? 'bg-[#C8102E] hover:bg-[#a50d26]' : 'bg-zinc-900 hover:bg-zinc-800'">
+                Vor Ort übergeben &amp; unterschreiben →
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===============================================================
+             VARIANTE B: KARTEN-GRID (Wenn uiTheme === 'standard')
+             =============================================================== -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" x-show="openNotes.length > 0 && uiTheme === 'standard'">
+          <template x-for="note in openNotes" :key="note.id">
+            <article class="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition flex flex-col justify-between overflow-hidden">
+              <div class="p-5">
+                <div class="flex items-start justify-between gap-2 mb-3">
                   <div>
-                    <label for="prep-osticket" class="block text-sm font-semibold text-slate-800 mb-1">
-                      osTicket-Nummer (nur Ziffern)
-                    </label>
-                    <input type="text"
-                           id="prep-osticket"
-                           name="osticket_number"
-                           x-model="form.osticket_number"
-                           @blur="sanitizeOsticketInput()"
-                           inputmode="numeric"
-                           pattern="[0-9]*"
-                           autocorrect="off"
-                           autocapitalize="none"
-                           spellcheck="false"
-                           aria-describedby="prep-osticket-help"
-                           placeholder="z. B. 382814"
-                           class="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2 font-mono text-slate-900">
-                    <span id="prep-osticket-help" class="block text-xs text-slate-500 mt-1">
-                      Automatische Bereinigung von <code>#</code>/Leerzeichen. Sendet PDF an osTicket (<code x-text="'[#' + (form.osticket_number || '382814') + ']'"></code>).
+                    <span class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded bg-blue-100 text-blue-800">
+                      Bereit zur Auslieferung
                     </span>
+                    <p class="text-xs font-mono text-slate-500 mt-1.5">
+                      <span x-text="note.delivery_number"></span> · <span x-text="formatDate(note.created_at)"></span>
+                    </p>
                   </div>
+                  <span x-show="note.osticket_number"
+                        class="inline-flex items-center text-xs font-mono font-bold px-2.5 py-1 rounded bg-sky-50 text-sky-800 border border-sky-200"
+                        x-text="'#' + note.osticket_number"></span>
+                </div>
 
-                  <div>
-                    <label for="prep-ordered-by" class="block text-sm font-semibold text-slate-800 mb-1">
-                      Besteller / Ansprechperson an der Schule
-                    </label>
-                    <input type="text"
-                           id="prep-ordered-by"
-                           name="ordered_by"
-                           x-model="form.ordered_by"
-                           placeholder="z. B. Fr. Schneider / Hr. Kienzle"
-                           class="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-slate-900">
+                <h3 class="text-lg font-bold text-slate-900 leading-snug mb-2" x-text="note.school_name"></h3>
+
+                <dl class="text-sm text-slate-700 space-y-1 mb-4">
+                  <div class="flex justify-between">
+                    <dt class="text-slate-500">Geräte gesamt:</dt>
+                    <dd class="font-bold text-slate-900" x-text="note.total_quantity + ' Einheit(en) (' + note.items.length + ' Pos.)'"></dd>
                   </div>
-
-                  <div>
-                    <label for="prep-room" class="block text-sm font-semibold text-slate-800 mb-1">
-                      Vorgesehener Aufstellort / Raum
-                    </label>
-                    <input type="text"
-                           id="prep-room"
-                           name="room"
-                           x-model="form.room"
-                           placeholder="z. B. EDV-Raum 2.04 oder Sekretariat"
-                           class="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-slate-900">
+                  <div class="flex justify-between" x-show="note.ordered_by">
+                    <dt class="text-slate-500">Besteller/in:</dt>
+                    <dd class="font-medium text-right" x-text="note.ordered_by"></dd>
                   </div>
+                  <div class="flex justify-between" x-show="note.room">
+                    <dt class="text-slate-500">Raum / Ort:</dt>
+                    <dd class="font-medium text-right" x-text="note.room"></dd>
+                  </div>
+                </dl>
 
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label for="prep-supplier" class="block text-sm font-semibold text-slate-800 mb-1">
-                        Lieferant
+                <div class="bg-slate-50 rounded-lg p-3 border border-slate-200/80 mb-3">
+                  <p class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">Geräte &amp; Inventarnummern</p>
+                  <ul class="space-y-1.5 text-xs">
+                    <template x-for="item in note.items" :key="item.id">
+                      <li class="flex items-start justify-between gap-2">
+                        <span class="font-medium text-slate-800 line-clamp-1" x-text="item.quantity + '× ' + item.device_type"></span>
+                        <span class="font-mono font-bold text-blue-700 whitespace-nowrap" x-text="item.inventory_number"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </div>
+
+                <div x-show="note.notes" class="bg-amber-50 border-l-4 border-amber-400 p-2.5 text-xs text-amber-950">
+                  <strong class="font-semibold">Hinweis:</strong>
+                  <span x-text="note.notes"></span>
+                </div>
+              </div>
+
+              <div class="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
+                <button type="button"
+                        @click="editExistingNote(note)"
+                        class="touch-btn text-xs font-semibold text-slate-600 hover:text-slate-900 px-3 py-2 rounded">
+                  Bearbeiten
+                </button>
+                <button type="button"
+                        @click="openHandoverView(note)"
+                        class="touch-btn flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2.5 rounded-lg text-center">
+                  Vor Ort übergeben &amp; quittieren →
+                </button>
+              </div>
+            </article>
+          </template>
+        </div>
+      </section>
+
+      <!-- =================================================================
+           TAB 2: VORBEREITEN / NEU (Desktop- & Scanner-optimiert)
+           ================================================================= -->
+      <section x-show="activeTab === 'prepare'" x-cloak aria-labelledby="heading-prepare-form">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+          <!-- Linke Hauptspalte (2/3): Erfassungsmaske -->
+          <div class="lg:col-span-2">
+            <div class="theme-card bg-white border border-zinc-300 p-5 sm:p-6">
+              <div class="flex flex-wrap items-center justify-between gap-3 pb-3 mb-5 border-b-2 border-zinc-900">
+                <div>
+                  <span x-show="directHandoverMode"
+                        class="inline-block font-mono text-xs font-bold uppercase tracking-wider px-2 py-0.5 bg-zinc-900 text-white mb-1">
+                    DIREKT-ÜBERGABE VOR ORT
+                  </span>
+                  <h2 id="heading-prepare-form" class="text-lg sm:text-xl font-bold text-zinc-900"
+                      :class="uiTheme === 'erp' ? 'font-mono uppercase' : ''"
+                      x-text="form.id ? ('BELEG ' + form.delivery_number + ' BEARBEITEN') : (directHandoverMode ? 'DIREKT-ÜBERGABE ERFASSEN' : 'WARENAUSGANG / LIEFERSCHEIN ERFASSEN')">
+                  </h2>
+                  <p class="text-xs text-zinc-600 mt-0.5">
+                    USB-Barcodescanner / Tastatur: <kbd class="px-1.5 py-0.5 bg-zinc-100 border border-zinc-300 font-mono text-[11px]">Enter</kbd> springt ins nächste Scan-Feld bzw. legt eine neue Positionszeile an.
+                  </p>
+                </div>
+                <button type="button" x-show="form.id || directHandoverMode" @click="resetPrepareForm(false)"
+                        class="text-xs font-mono font-semibold text-zinc-700 hover:text-zinc-950 px-3 py-1.5 border border-zinc-300 bg-zinc-50">
+                  MASKE LEEREN
+                </button>
+              </div>
+
+              <!-- Fehlermeldung -->
+              <div x-show="formError" role="alert" class="mb-5 bg-red-50 border-l-4 border-red-600 p-3.5 text-sm text-red-900">
+                <p class="font-bold">Bitte Eingaben prüfen:</p>
+                <p x-text="formError"></p>
+              </div>
+
+              <form @submit.prevent="saveDeliveryNote('BEREIT', directHandoverMode)"
+                    action="/api/delivery-notes"
+                    method="POST"
+                    aria-labelledby="heading-prepare-form"
+                    novalidate>
+
+                <!-- 1. Schule & E-Mail-Empfänger -->
+                <fieldset class="mb-6 border border-zinc-300 p-4 bg-zinc-50/60">
+                  <legend class="text-xs font-mono font-bold uppercase tracking-wider text-zinc-700 px-2">
+                    01 // EMPFÄNGERSCHULE &amp; E-MAIL-ZUSTELLUNG
+                  </legend>
+
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-1">
+                    <div class="sm:col-span-2">
+                      <label for="prep-school" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
+                        Schule auswählen <span class="text-red-600" aria-hidden="true">*</span>
                       </label>
-                      <input type="text"
-                             id="prep-supplier"
-                             name="supplier"
-                             x-model="form.supplier"
-                             placeholder="z. B. Bechtle / Cancom"
-                             class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900">
+                      <select id="prep-school"
+                              name="school_id"
+                              x-model="form.school_id"
+                              @change="onSchoolChange()"
+                              required
+                              class="w-full border border-zinc-300 bg-white px-3 py-2 text-zinc-900">
+                        <option value="">— Bitte Schule auswählen —</option>
+                        <template x-for="school in schools.filter(s => s.active || s.id == form.school_id)" :key="school.id">
+                          <option :value="school.id" x-text="school.name + (school.short_code ? ' [' + school.short_code + ']' : '')"></option>
+                        </template>
+                      </select>
                     </div>
+
                     <div>
-                      <label for="prep-invoice" class="block text-sm font-semibold text-slate-800 mb-1">
-                        Rechnungsnummer
+                      <label for="prep-email" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
+                        E-Mail Schulsekretariat <span class="text-red-600" aria-hidden="true">*</span>
                       </label>
-                      <input type="text"
-                             id="prep-invoice"
-                             name="invoice_number"
-                             x-model="form.invoice_number"
+                      <input type="email"
+                             id="prep-email"
+                             name="recipient_email"
+                             x-model="form.recipient_email"
+                             required
+                             autocomplete="email"
                              autocorrect="off"
                              autocapitalize="none"
                              spellcheck="false"
-                             placeholder="z. B. RE-2026-88412"
-                             class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900">
+                             aria-describedby="prep-email-help"
+                             placeholder="sekretariat@schule.local"
+                             class="w-full border border-zinc-300 bg-white px-3 py-2 text-zinc-900">
+                      <span id="prep-email-help" class="block text-[11px] text-zinc-500 mt-1">
+                        Automatisch aus Stammdaten übernommen, überschreibbar.
+                      </span>
+                    </div>
+
+                    <div>
+                      <label for="prep-cc-email" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
+                        Optionale CC-Empfänger
+                      </label>
+                      <input type="email"
+                             id="prep-cc-email"
+                             name="cc_email"
+                             x-model="form.cc_email"
+                             autocomplete="email"
+                             autocorrect="off"
+                             autocapitalize="none"
+                             spellcheck="false"
+                             placeholder="optional@schule.local"
+                             class="w-full border border-zinc-300 bg-white px-3 py-2 text-zinc-900">
                     </div>
                   </div>
-                </div>
-              </fieldset>
+                </fieldset>
 
-              <!-- 3. Dynamische Geräteliste -->
-              <fieldset class="mb-7 border border-slate-200 rounded-xl p-4 sm:p-5 bg-white">
-                <legend class="text-sm font-bold uppercase tracking-wider text-slate-700 px-2">
-                  3. Geräteliste &amp; Inventarnummern <span class="text-red-600" aria-hidden="true">*</span>
-                </legend>
+                <!-- 2. Stammdaten & Referenzen -->
+                <fieldset class="mb-6 border border-zinc-300 p-4 bg-zinc-50/60">
+                  <legend class="text-xs font-mono font-bold uppercase tracking-wider text-zinc-700 px-2">
+                    02 // REFERENZDATEN &amp; OSTICKET (OPTIONAL)
+                  </legend>
 
-                <div class="space-y-4 mt-2">
-                  <template x-for="(item, index) in form.items" :key="index">
-                    <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                      <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs font-bold uppercase tracking-wide text-slate-500"
-                              x-text="'Position ' + (index + 1)"></span>
-                        <div class="flex items-center gap-2">
-                          <button type="button"
-                                  x-show="index > 0"
-                                  @click="duplicateItemTypeFromAbove(index)"
-                                  class="text-xs font-semibold text-blue-700 hover:underline">
-                            ↑ Gerätetyp von Pos. <span x-text="index"></span> übernehmen
-                          </button>
-                          <button type="button"
-                                  @click="removeItemRow(index)"
-                                  class="text-xs font-semibold text-red-600 hover:text-red-800 px-2 py-1 rounded hover:bg-red-50"
-                                  :aria-label="'Position ' + (index + 1) + ' entfernen'">
-                            Entfernen
-                          </button>
-                        </div>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-1">
+                    <div>
+                      <label for="prep-osticket" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
+                        osTicket-Nummer (nur Ziffern)
+                      </label>
+                      <input type="text"
+                             id="prep-osticket"
+                             name="osticket_number"
+                             x-model="form.osticket_number"
+                             @blur="sanitizeOsticketInput()"
+                             inputmode="numeric"
+                             pattern="[0-9]*"
+                             autocorrect="off"
+                             autocapitalize="none"
+                             spellcheck="false"
+                             aria-describedby="prep-osticket-help"
+                             placeholder="z. B. 382814"
+                             class="w-full border border-zinc-300 bg-white px-3 py-2 font-mono text-zinc-900">
+                      <span id="prep-osticket-help" class="block text-[11px] text-zinc-500 mt-1">
+                        Sendet PDF mit Betreff <code x-text="'[#' + (form.osticket_number || '382814') + ']'"></code> an osTicket.
+                      </span>
+                    </div>
+
+                    <div>
+                      <label for="prep-ordered-by" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
+                        Besteller / Ansprechperson
+                      </label>
+                      <input type="text"
+                             id="prep-ordered-by"
+                             name="ordered_by"
+                             x-model="form.ordered_by"
+                             placeholder="z. B. Fr. Schneider / Hr. Kienzle"
+                             class="w-full border border-zinc-300 bg-white px-3 py-2 text-zinc-900">
+                    </div>
+
+                    <div>
+                      <label for="prep-room" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
+                        Vorgesehener Aufstellort / Raum
+                      </label>
+                      <input type="text"
+                             id="prep-room"
+                             name="room"
+                             x-model="form.room"
+                             placeholder="z. B. EDV-Raum 2.04 oder Sekretariat"
+                             class="w-full border border-zinc-300 bg-white px-3 py-2 text-zinc-900">
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label for="prep-supplier" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
+                          Lieferant
+                        </label>
+                        <input type="text"
+                               id="prep-supplier"
+                               name="supplier"
+                               x-model="form.supplier"
+                               placeholder="z. B. Bechtle / Cancom"
+                               class="w-full border border-zinc-300 bg-white px-3 py-2 text-zinc-900">
                       </div>
-
-                      <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                        <!-- Gerätebezeichnung / Typ -->
-                        <div class="sm:col-span-5">
-                          <label :for="'item-type-' + index" class="block text-xs font-semibold text-slate-700 mb-1">
-                            Gerätebezeichnung / Typ <span class="text-red-600" aria-hidden="true">*</span>
-                          </label>
-                          <input type="text"
-                                 :id="'item-type-' + index"
-                                 :name="'item_type_' + index"
-                                 x-model="item.device_type"
-                                 @keydown.enter="handleScannerEnter($event, index, 'device_type')"
-                                 enterkeyhint="next"
-                                 required
-                                 placeholder="z. B. Apple iPad 10. Gen 64GB"
-                                 class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900">
-                        </div>
-
-                        <!-- Inventarnummer + Kamera-Scanner -->
-                        <div class="sm:col-span-3">
-                          <label :for="'item-inv-' + index" class="block text-xs font-semibold text-slate-700 mb-1">
-                            Inventarnummer <span class="text-red-600" aria-hidden="true">*</span>
-                          </label>
-                          <div class="flex gap-1">
-                            <input type="text"
-                                   :id="'item-inv-' + index"
-                                   :name="'item_inv_' + index"
-                                   x-model="item.inventory_number"
-                                   @keydown.enter="handleScannerEnter($event, index, 'inventory_number')"
-                                   autocorrect="off"
-                                   autocapitalize="none"
-                                   spellcheck="false"
-                                   enterkeyhint="next"
-                                   required
-                                   placeholder="INV-2026-..."
-                                   class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-mono text-slate-900">
-                            <button type="button"
-                                    @click="openBarcodeScanner(index, 'inventory_number')"
-                                    title="Inventarnummer per Kamera scannen"
-                                    :aria-label="'Inventarnummer für Position ' + (index + 1) + ' per Kamera scannen'"
-                                    class="px-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 shrink-0">
-                              📷
-                            </button>
-                          </div>
-                        </div>
-
-                        <!-- Seriennummer + Kamera-Scanner -->
-                        <div class="sm:col-span-3">
-                          <label :for="'item-sn-' + index" class="block text-xs font-semibold text-slate-700 mb-1">
-                            Seriennummer (optional)
-                          </label>
-                          <div class="flex gap-1">
-                            <input type="text"
-                                   :id="'item-sn-' + index"
-                                   :name="'item_sn_' + index"
-                                   x-model="item.serial_number"
-                                   @keydown.enter="handleScannerEnter($event, index, 'serial_number')"
-                                   autocorrect="off"
-                                   autocapitalize="none"
-                                   spellcheck="false"
-                                   enterkeyhint="next"
-                                   placeholder="S/N optional"
-                                   class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-mono text-slate-900">
-                            <button type="button"
-                                    @click="openBarcodeScanner(index, 'serial_number')"
-                                    title="Seriennummer per Kamera scannen"
-                                    :aria-label="'Seriennummer für Position ' + (index + 1) + ' per Kamera scannen'"
-                                    class="px-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 shrink-0">
-                              📷
-                            </button>
-                          </div>
-                        </div>
-
-                        <!-- Menge -->
-                        <div class="sm:col-span-1">
-                          <label :for="'item-qty-' + index" class="block text-xs font-semibold text-slate-700 mb-1">
-                            Menge
-                          </label>
-                          <input type="number"
-                                 :id="'item-qty-' + index"
-                                 :name="'item_qty_' + index"
-                                 x-model.number="item.quantity"
-                                 min="1"
-                                 max="9999"
-                                 required
-                                 class="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm text-center font-bold text-slate-900">
-                        </div>
+                      <div>
+                        <label for="prep-invoice" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
+                          Rechnungs-Nr.
+                        </label>
+                        <input type="text"
+                               id="prep-invoice"
+                               name="invoice_number"
+                               x-model="form.invoice_number"
+                               autocorrect="off"
+                               autocapitalize="none"
+                               spellcheck="false"
+                               placeholder="RE-2026-..."
+                               class="w-full border border-zinc-300 bg-white px-3 py-2 font-mono text-zinc-900">
                       </div>
                     </div>
-                  </template>
+                  </div>
+                </fieldset>
+
+                <!-- 3. Dynamische Geräteliste (ERP-Scanner-Zeilen) -->
+                <fieldset class="mb-6 border border-zinc-300 p-4 bg-white">
+                  <legend class="text-xs font-mono font-bold uppercase tracking-wider text-zinc-700 px-2">
+                    03 // GERÄTEPOSITIONEN &amp; BARCODE-ERFASSUNG <span class="text-red-600" aria-hidden="true">*</span>
+                  </legend>
+
+                  <div class="space-y-3 mt-1">
+                    <template x-for="(item, index) in form.items" :key="index">
+                      <div class="erp-scan-row p-3 bg-zinc-50 border border-zinc-300 transition">
+                        <div class="flex items-center justify-between mb-2">
+                          <span class="font-mono text-xs font-bold uppercase text-zinc-600"
+                                x-text="'POS ' + String(index + 1).padStart(3, '0')"></span>
+                          <div class="flex items-center gap-3">
+                            <button type="button"
+                                    x-show="index > 0"
+                                    @click="duplicateItemTypeFromAbove(index)"
+                                    class="font-mono text-xs font-semibold text-sky-700 hover:underline">
+                              [↑ TYP VON POS <span x-text="String(index).padStart(3, '0')"></span> ÜBERNEHMEN]
+                            </button>
+                            <button type="button"
+                                    @click="removeItemRow(index)"
+                                    class="font-mono text-xs font-semibold text-red-600 hover:text-red-800 px-1.5 py-0.5"
+                                    :aria-label="'Position ' + (index + 1) + ' entfernen'">
+                              [ENTFERNEN]
+                            </button>
+                          </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                          <!-- Gerätebezeichnung / Typ -->
+                          <div class="sm:col-span-5">
+                            <label :for="'item-type-' + index" class="block text-[11px] font-mono font-bold uppercase text-zinc-600 mb-1">
+                              Gerätebezeichnung / Typ *
+                            </label>
+                            <input type="text"
+                                   :id="'item-type-' + index"
+                                   :name="'item_type_' + index"
+                                   x-model="item.device_type"
+                                   @keydown.enter="handleScannerEnter($event, index, 'device_type')"
+                                   enterkeyhint="next"
+                                   required
+                                   placeholder="z. B. Apple iPad 10. Gen 64GB"
+                                   class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-sm text-zinc-900">
+                          </div>
+
+                          <!-- Inventarnummer + Kamera-Scanner -->
+                          <div class="sm:col-span-3">
+                            <label :for="'item-inv-' + index" class="block text-[11px] font-mono font-bold uppercase text-zinc-600 mb-1">
+                              Inventarnummer *
+                            </label>
+                            <div class="flex gap-1">
+                              <input type="text"
+                                     :id="'item-inv-' + index"
+                                     :name="'item_inv_' + index"
+                                     x-model="item.inventory_number"
+                                     @keydown.enter="handleScannerEnter($event, index, 'inventory_number')"
+                                     autocorrect="off"
+                                     autocapitalize="none"
+                                     spellcheck="false"
+                                     enterkeyhint="next"
+                                     required
+                                     placeholder="INV-2026-..."
+                                     class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-sm font-mono font-bold text-zinc-900">
+                              <button type="button"
+                                      @click="openBarcodeScanner(index, 'inventory_number')"
+                                      title="Inventarnummer per Kamera scannen"
+                                      :aria-label="'Inventarnummer für Position ' + (index + 1) + ' per Kamera scannen'"
+                                      class="px-2.5 border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 shrink-0 flex items-center justify-center">
+                                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                  <path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><line x1="7" y1="8" x2="7" y2="16"></line><line x1="12" y1="8" x2="12" y2="16"></line><line x1="17" y1="8" x2="17" y2="16"></line>
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+
+                          <!-- Seriennummer + Kamera-Scanner -->
+                          <div class="sm:col-span-3">
+                            <label :for="'item-sn-' + index" class="block text-[11px] font-mono font-bold uppercase text-zinc-600 mb-1">
+                              Seriennummer
+                            </label>
+                            <div class="flex gap-1">
+                              <input type="text"
+                                     :id="'item-sn-' + index"
+                                     :name="'item_sn_' + index"
+                                     x-model="item.serial_number"
+                                     @keydown.enter="handleScannerEnter($event, index, 'serial_number')"
+                                     autocorrect="off"
+                                     autocapitalize="none"
+                                     spellcheck="false"
+                                     enterkeyhint="next"
+                                     placeholder="S/N optional"
+                                     class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-sm font-mono text-zinc-900">
+                              <button type="button"
+                                      @click="openBarcodeScanner(index, 'serial_number')"
+                                      title="Seriennummer per Kamera scannen"
+                                      :aria-label="'Seriennummer für Position ' + (index + 1) + ' per Kamera scannen'"
+                                      class="px-2.5 border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 shrink-0 flex items-center justify-center">
+                                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                  <path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><line x1="7" y1="8" x2="7" y2="16"></line><line x1="12" y1="8" x2="12" y2="16"></line><line x1="17" y1="8" x2="17" y2="16"></line>
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+
+                          <!-- Menge -->
+                          <div class="sm:col-span-1">
+                            <label :for="'item-qty-' + index" class="block text-[11px] font-mono font-bold uppercase text-zinc-600 mb-1">
+                              Menge
+                            </label>
+                            <input type="number"
+                                   :id="'item-qty-' + index"
+                                   :name="'item_qty_' + index"
+                                   x-model.number="item.quantity"
+                                   min="1"
+                                   max="9999"
+                                   required
+                                   class="w-full border border-zinc-300 bg-white px-2 py-1.5 text-sm font-mono text-center font-bold text-zinc-900">
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+
+                  <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    <button type="button"
+                            @click="addItemRow()"
+                            class="touch-btn bg-zinc-100 hover:bg-zinc-200 text-zinc-900 font-mono font-bold text-xs px-4 py-2 border border-zinc-300">
+                      + WEITERE POSITION [ENTER]
+                    </button>
+                    <span class="text-xs font-mono text-zinc-500">
+                      [Enter] im Feld Seriennummer erzeugt automatisch die nächste Zeile.
+                    </span>
+                  </div>
+                </fieldset>
+
+                <!-- 4. Freitext-Notizfeld -->
+                <div class="mb-6">
+                  <label for="prep-notes" class="block text-xs font-mono font-bold uppercase text-zinc-700 mb-1">
+                    04 // HINWEISE FÜR SCHULE ODER AUSLIEFERER (OPTIONAL)
+                  </label>
+                  <textarea id="prep-notes"
+                            name="notes"
+                            x-model="form.notes"
+                            rows="2"
+                            placeholder="z. B. Geräte sind noch nicht eingerichtet, bitte an IT-Lehrkraft weitergeben …"
+                            class="w-full border border-zinc-300 bg-white p-3 text-sm text-zinc-900"></textarea>
                 </div>
 
-                <div class="mt-4 flex flex-wrap items-center justify-between gap-2">
+                <!-- 5. Speichern-Aktionen -->
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3 pt-4 border-t border-zinc-300">
                   <button type="button"
-                          @click="addItemRow()"
-                          class="touch-btn inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-sm px-4 py-2.5 rounded-xl border border-slate-300">
-                    <span>+ Weitere Geräteposition hinzufügen</span>
+                          x-show="!directHandoverMode"
+                          :disabled="isSubmitting"
+                          @click="saveDeliveryNote('ENTWURF', false)"
+                          class="touch-btn bg-amber-100 hover:bg-amber-200 text-amber-950 font-semibold text-xs sm:text-sm px-5 py-2.5 border border-amber-400">
+                    Als Entwurf parken (ENTWURF)
                   </button>
-                  <span class="text-xs text-slate-500">
-                    Drücken Sie im Feld „Seriennummer“ die <kbd class="px-1.5 py-0.5 bg-slate-100 border rounded">Enter</kbd>-Taste für eine neue Zeile.
-                  </span>
+
+                  <button type="submit"
+                          x-show="!directHandoverMode"
+                          :disabled="isSubmitting"
+                          class="touch-btn text-white font-bold text-xs sm:text-sm px-6 py-2.5 transition"
+                          :class="uiTheme === 'gmuend' ? 'bg-[#C8102E] hover:bg-[#a50d26]' : 'bg-zinc-900 hover:bg-zinc-800'">
+                    Zur Auslieferung freigeben (Status: BEREIT) →
+                  </button>
+
+                  <button type="submit"
+                          x-show="directHandoverMode"
+                          :disabled="isSubmitting"
+                          class="touch-btn text-white font-bold text-xs sm:text-sm px-6 py-2.5 transition"
+                          :class="uiTheme === 'gmuend' ? 'bg-[#C8102E] hover:bg-[#a50d26]' : 'bg-zinc-900 hover:bg-zinc-800'">
+                    Weiter zur Unterschrift vor Ort →
+                  </button>
                 </div>
-              </fieldset>
+              </form>
+            </div>
+          </div>
 
-              <!-- 4. Freitext-Notizfeld -->
-              <div class="mb-7">
-                <label for="prep-notes" class="block text-sm font-semibold text-slate-800 mb-1">
-                  4. Hinweise / Freitext-Notiz für Schule oder Auslieferer (optional)
-                </label>
-                <textarea id="prep-notes"
-                          name="notes"
-                          x-model="form.notes"
-                          rows="3"
-                          placeholder="z. B. Geräte sind noch nicht eingerichtet, bitte an IT-Lehrkraft weitergeben …"
-                          class="w-full rounded-xl border border-slate-300 bg-white p-3.5 text-slate-900"></textarea>
+          <!-- Rechte Spalte (1/3): Bestehende Entwürfe & Vorbereitungen -->
+          <aside class="lg:col-span-1">
+            <div class="theme-card bg-white border border-zinc-300 p-4 sm:p-5">
+              <h3 class="text-sm font-mono font-bold uppercase text-zinc-900 pb-2 mb-3 border-b border-zinc-300">
+                ENTWÜRFE &amp; OFFENE BELEGE (<span x-text="draftAndReadyNotes.length"></span>)
+              </h3>
+
+              <div x-show="draftAndReadyNotes.length === 0" class="text-xs text-zinc-500 py-6 text-center border border-dashed border-zinc-300">
+                Keine offenen Entwürfe oder Vorbereitungen.
               </div>
 
-              <!-- 5. Speichern-Aktionen -->
-              <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3 pt-4 border-t border-slate-200">
-                <button type="button"
-                        x-show="!directHandoverMode"
-                        :disabled="isSubmitting"
-                        @click="saveDeliveryNote('ENTWURF', false)"
-                        class="touch-btn bg-amber-100 hover:bg-amber-200 text-amber-950 font-semibold text-sm px-5 py-3 rounded-xl border border-amber-300 transition">
-                  Als Entwurf speichern
-                </button>
-
-                <button type="submit"
-                        x-show="!directHandoverMode"
-                        :disabled="isSubmitting"
-                        class="touch-btn bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-6 py-3 rounded-xl shadow-sm transition">
-                  Zur Auslieferung freigeben (Status: BEREIT)
-                </button>
-
-                <button type="submit"
-                        x-show="directHandoverMode"
-                        :disabled="isSubmitting"
-                        class="touch-btn bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-6 py-3 rounded-xl shadow-sm transition">
-                  Weiter zur Unterschrift vor Ort →
-                </button>
+              <div class="space-y-2.5 max-h-[640px] overflow-y-auto pr-1">
+                <template x-for="n in draftAndReadyNotes" :key="n.id">
+                  <div class="p-3 border transition"
+                       :class="form.id === n.id ? 'border-zinc-900 bg-sky-50/50' : 'border-zinc-300 bg-zinc-50/60 hover:bg-zinc-100/70'">
+                    <div class="flex items-center justify-between gap-2 mb-1">
+                      <span class="font-mono text-xs font-bold text-zinc-900" x-text="n.delivery_number"></span>
+                      <span class="font-mono text-[10px] font-bold px-1.5 py-0.5 border"
+                            :class="n.status === 'ENTWURF' ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-zinc-900 text-white border-zinc-900'"
+                            x-text="n.status"></span>
+                    </div>
+                    <p class="font-bold text-sm text-zinc-900" x-text="n.school_name"></p>
+                    <p class="text-xs font-mono text-zinc-600 mt-0.5">
+                      <span x-text="n.total_quantity + ' Einh.'"></span>
+                      <span x-show="n.osticket_number" x-text="' · #' + n.osticket_number"></span>
+                    </p>
+                    <div class="mt-2.5 flex items-center justify-between gap-2 pt-2 border-t border-zinc-200">
+                      <div class="flex gap-2">
+                        <button type="button" @click="editExistingNote(n)"
+                                class="text-xs font-semibold text-zinc-800 hover:underline">
+                          Bearbeiten
+                        </button>
+                        <button type="button" @click="deleteNote(n)"
+                                class="text-xs font-semibold text-red-600 hover:underline">
+                          Löschen
+                        </button>
+                      </div>
+                      <button type="button" @click="openHandoverView(n)"
+                              class="text-xs font-mono font-bold bg-zinc-900 hover:bg-zinc-800 text-white px-2.5 py-1">
+                        Quittieren →
+                      </button>
+                    </div>
+                  </div>
+                </template>
               </div>
-            </form>
+            </div>
+          </aside>
+
+        </div>
+      </section>
+
+      <!-- =================================================================
+           TAB 2b: ÜBERGABE & UNTERSCHRIFT VOR ORT (Stufe 2 – iPad/Mobile)
+           ================================================================= -->
+      <section x-show="activeTab === 'handover'" x-cloak aria-labelledby="heading-handover">
+        <div class="max-w-3xl mx-auto">
+
+          <!-- Zurück-Leiste -->
+          <div class="mb-4 flex items-center justify-between">
+            <button type="button" @click="switchTab('deliveries')"
+                    class="touch-btn inline-flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-zinc-800 bg-white px-3.5 py-2 border border-zinc-300">
+              <span>← Zurück zur Auslieferungsliste</span>
+            </button>
+            <button type="button"
+                    x-show="currentHandoverNote && currentHandoverNote.status !== 'ABGESCHLOSSEN'"
+                    @click="editExistingNote(currentHandoverNote)"
+                    class="touch-btn text-xs font-semibold text-zinc-700 bg-white px-3 py-2 border border-zinc-300">
+              Belegdaten ändern
+            </button>
+          </div>
+
+          <!-- FALL A: Übergabe wurde soeben erfolgreich abgeschlossen -->
+          <div x-show="completedResultNote" class="theme-card bg-white border-2 border-emerald-600 p-6 mb-6">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+              <div>
+                <span class="inline-block font-mono text-xs font-bold uppercase px-2.5 py-1 bg-emerald-100 text-emerald-900 border border-emerald-300">
+                  STATUS: ABGESCHLOSSEN &amp; ARCHIVIERT
+                </span>
+                <h2 class="text-xl font-bold text-zinc-900 mt-2"
+                    x-text="completedResultNote ? ('Lieferschein ' + completedResultNote.delivery_number) : ''"></h2>
+                <p class="text-sm text-zinc-600"
+                   x-text="completedResultNote ? (completedResultNote.school_name + ' · Quittiert von ' + completedResultNote.received_by) : ''"></p>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <a :href="completedResultNote ? ('/api/delivery-notes/' + completedResultNote.id + '/pdf') : '#'"
+                   target="_blank"
+                   rel="noopener"
+                   class="touch-btn inline-flex items-center justify-center bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs sm:text-sm px-4 py-2.5">
+                  PDF-Protokoll öffnen
+                </a>
+                <a :href="completedResultNote ? ('/api/delivery-notes/' + completedResultNote.id + '/pdf?download=true') : '#'"
+                   class="touch-btn inline-flex items-center justify-center bg-white hover:bg-zinc-100 text-zinc-900 border border-zinc-300 font-semibold text-xs sm:text-sm px-4 py-2.5">
+                  PDF herunterladen
+                </a>
+              </div>
+            </div>
+
+            <!-- Versandstatus (Schule & osTicket getrennt) -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 my-4" x-show="completedResultNote">
+              <div class="p-3.5 border border-zinc-300 bg-zinc-50">
+                <p class="font-mono text-xs font-bold uppercase text-zinc-500 mb-1">1. E-Mail an Schulsekretariat</p>
+                <p class="text-sm font-medium text-zinc-900 mb-2" x-text="completedResultNote?.recipient_email"></p>
+                <span class="inline-block font-mono text-xs font-bold px-2 py-0.5 border"
+                      :class="emailBadgeClass(completedResultNote?.email_school_status)"
+                      x-text="emailStatusLabel(completedResultNote?.email_school_status)"></span>
+                <p x-show="completedResultNote?.email_school_error"
+                   class="text-xs text-red-700 mt-2 font-mono"
+                   x-text="completedResultNote?.email_school_error"></p>
+              </div>
+
+              <div class="p-3.5 border border-zinc-300 bg-zinc-50">
+                <p class="font-mono text-xs font-bold uppercase text-zinc-500 mb-1">2. Automatische osTicket-Zuordnung</p>
+                <p class="text-sm font-medium text-zinc-900 mb-2"
+                   x-text="completedResultNote?.osticket_number ? ('Ticket #' + completedResultNote.osticket_number + ' (' + (osticketEmail || 'OSTICKET_EMAIL') + ')') : 'Keine osTicket-Nr. hinterlegt'"></p>
+                <span class="inline-block font-mono text-xs font-bold px-2 py-0.5 border"
+                      :class="emailBadgeClass(completedResultNote?.email_osticket_status)"
+                      x-text="emailStatusLabel(completedResultNote?.email_osticket_status)"></span>
+                <p x-show="completedResultNote?.email_osticket_error"
+                   class="text-xs text-red-700 mt-2 font-mono"
+                   x-text="completedResultNote?.email_osticket_error"></p>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-zinc-200">
+              <button type="button"
+                      @click="resendEmails(completedResultNote)"
+                      :disabled="resendingEmailId === completedResultNote?.id"
+                      class="touch-btn bg-zinc-100 hover:bg-zinc-200 text-zinc-800 font-semibold text-xs sm:text-sm px-4 py-2 border border-zinc-300">
+                <span x-text="resendingEmailId === completedResultNote?.id ? 'Sende E-Mails …' : 'E-Mail erneut senden'"></span>
+              </button>
+              <button type="button"
+                      @click="switchTab('deliveries')"
+                      class="touch-btn bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs sm:text-sm px-5 py-2.5">
+                Zurück zur Auslieferungsliste →
+              </button>
+            </div>
+          </div>
+
+          <!-- FALL B: Übergabe-Formular & Digitale Unterschrift (Amtliches Übergabeblatt) -->
+          <div x-show="currentHandoverNote && !completedResultNote" class="theme-card bg-white border border-zinc-300 overflow-hidden">
+            <!-- Dokument-Kopfbereich -->
+            <div class="bg-zinc-900 text-white p-5 border-b border-zinc-800">
+              <div class="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                <span class="font-mono text-xs uppercase tracking-wider px-2 py-0.5 bg-zinc-800 border border-zinc-700 text-zinc-100 font-bold"
+                      x-text="'BELEG ' + currentHandoverNote?.delivery_number"></span>
+                <span x-show="currentHandoverNote?.osticket_number"
+                      class="font-mono text-xs font-bold px-2 py-0.5 bg-zinc-800 text-sky-300 border border-zinc-700"
+                      x-text="'OSTICKET #' + currentHandoverNote?.osticket_number"></span>
+              </div>
+              <h2 id="heading-handover" class="text-xl font-bold" x-text="currentHandoverNote?.school_name"></h2>
+              <div class="mt-1.5 flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-300">
+                <span x-show="currentHandoverNote?.ordered_by">
+                  <strong>Besteller/in:</strong> <span x-text="currentHandoverNote?.ordered_by"></span>
+                </span>
+                <span x-show="currentHandoverNote?.room">
+                  <strong>Raum/Ort:</strong> <span x-text="currentHandoverNote?.room"></span>
+                </span>
+                <span>
+                  <strong>E-Mail:</strong> <span x-text="currentHandoverNote?.recipient_email"></span>
+                </span>
+              </div>
+            </div>
+
+            <div class="p-5 sm:p-6">
+              <!-- Übersicht der zu übergebenden Geräte -->
+              <div class="mb-5">
+                <h3 class="font-mono text-xs font-bold uppercase tracking-wider text-zinc-600 mb-2">
+                  ÜBERGEBENE IT-GERÄTE (<span x-text="currentHandoverNote?.total_quantity"></span> EINHEITEN)
+                </h3>
+                <div class="border border-zinc-300 overflow-hidden">
+                  <table class="w-full text-xs sm:text-sm text-left border-collapse">
+                    <thead class="bg-zinc-100 text-zinc-700 font-mono text-xs uppercase border-b border-zinc-300">
+                      <tr>
+                        <th class="py-2 px-3">Gerät / Typ</th>
+                        <th class="py-2 px-3">Inventar-Nr.</th>
+                        <th class="py-2 px-3 hidden sm:table-cell">Serien-Nr.</th>
+                        <th class="py-2 px-3 text-center">Menge</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-zinc-200">
+                      <template x-for="item in (currentHandoverNote?.items || [])" :key="item.id">
+                        <tr>
+                          <td class="py-2 px-3 font-medium text-zinc-900" x-text="item.device_type"></td>
+                          <td class="py-2 px-3 font-mono font-bold text-zinc-900" x-text="item.inventory_number"></td>
+                          <td class="py-2 px-3 font-mono text-xs text-zinc-600 hidden sm:table-cell" x-text="item.serial_number || '–'"></td>
+                          <td class="py-2 px-3 text-center font-mono font-bold" x-text="item.quantity"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Vorbereitungs-Notiz -->
+              <div x-show="currentHandoverNote?.notes" class="mb-5 bg-amber-50 border border-amber-300 border-l-4 border-l-amber-500 p-3 text-xs sm:text-sm text-amber-950">
+                <p class="font-mono font-bold text-[11px] uppercase text-amber-800 mb-0.5">HINWEIS AUS DER VORBEREITUNG:</p>
+                <p x-text="currentHandoverNote?.notes"></p>
+              </div>
+
+              <!-- Fehleranzeige bei der Übergabe -->
+              <div x-show="handoverError" role="alert" class="mb-5 bg-red-50 border-l-4 border-red-600 p-3.5 text-sm text-red-900">
+                <p class="font-bold" x-text="handoverError"></p>
+              </div>
+
+              <!-- Übergabe-Formular -->
+              <form @submit.prevent="submitHandover()"
+                    action="/api/delivery-notes/complete"
+                    method="POST"
+                    aria-labelledby="heading-handover"
+                    novalidate>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                  <!-- Übergeben von (IT-Mitarbeiter / Azubi) -->
+                  <div>
+                    <label for="handover-delivered-by" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
+                      Übergeben von (Schul-IT / Azubi) <span class="text-red-600" aria-hidden="true">*</span>
+                    </label>
+                    <select id="handover-delivered-by"
+                            name="delivered_by_select"
+                            x-model="handoverForm.delivered_by_select"
+                            required
+                            class="w-full border border-zinc-300 bg-white px-3 py-2 text-zinc-900">
+                      <template x-for="staff in staffList.filter(s => s.active)" :key="staff.id">
+                        <option :value="staff.name" x-text="staff.name + (staff.role ? ' (' + staff.role + ')' : '')"></option>
+                      </template>
+                      <option value="__custom__">— Eigene Eingabe / Freitext … —</option>
+                    </select>
+
+                    <div x-show="handoverForm.delivered_by_select === '__custom__'" class="mt-2">
+                      <label for="handover-delivered-custom" class="block text-xs font-semibold text-zinc-600 mb-1">
+                        Name des übergebenden Mitarbeiters <span class="text-red-600" aria-hidden="true">*</span>
+                      </label>
+                      <input type="text"
+                             id="handover-delivered-custom"
+                             name="delivered_by_custom"
+                             x-model="handoverForm.delivered_by_custom"
+                             placeholder="Vor- und Nachname"
+                             class="w-full border border-zinc-300 bg-white px-3 py-2 text-zinc-900">
+                    </div>
+                  </div>
+
+                  <!-- Angenommen von (Person vor Ort an der Schule) -->
+                  <div>
+                    <label for="handover-received-by" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
+                      Angenommen von (Person vor Ort) <span class="text-red-600" aria-hidden="true">*</span>
+                    </label>
+                    <input type="text"
+                           id="handover-received-by"
+                           name="received_by"
+                           x-model="handoverForm.received_by"
+                           required
+                           placeholder="z. B. Fr. Müller (Sekretariat) / Hr. Mayer"
+                           class="w-full border border-zinc-300 bg-white px-3 py-2 text-zinc-900">
+                  </div>
+                </div>
+
+                <!-- Optionales Zusatz-Notizfeld bei der Übergabe -->
+                <div class="mb-5">
+                  <label for="handover-notes" class="block text-xs font-bold uppercase text-zinc-700 mb-1">
+                    Bemerkungen bei der Vor-Ort-Übergabe (optional)
+                  </label>
+                  <textarea id="handover-notes"
+                            name="handover_notes"
+                            x-model="handoverForm.handover_notes"
+                            rows="2"
+                            placeholder="z. B. Abgegeben bei Hausmeister Hr. Mayer …"
+                            class="w-full border border-zinc-300 bg-white p-3 text-sm text-zinc-900"></textarea>
+                </div>
+
+                <!-- Digitale Unterschrift (signature_pad) -->
+                <div class="mb-5">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <label class="block text-xs font-bold uppercase text-zinc-900">
+                      Digitale Unterschrift des Empfängers <span class="text-red-600" aria-hidden="true">*</span>
+                    </label>
+                    <button type="button"
+                            @click="clearSignature()"
+                            class="text-xs font-mono font-semibold text-zinc-700 hover:text-red-700 bg-zinc-100 hover:bg-red-50 px-3 py-1 border border-zinc-300">
+                      [UNTERSCHRIFT LÖSCHEN]
+                    </button>
+                  </div>
+                  <div class="signature-canvas-wrapper border-2 border-zinc-900 bg-white overflow-hidden">
+                    <canvas id="signature-canvas" aria-label="Unterschriftsfeld zur digitalen Quittierung"></canvas>
+                  </div>
+                  <p class="text-xs text-zinc-500 mt-1">
+                    Bitte mit Apple Pencil, Touch-Stift, Finger oder Maus quittieren.
+                  </p>
+                </div>
+
+                <!-- Hauptbutton: Übergabe abschließen & versenden -->
+                <div class="pt-3 border-t border-zinc-300">
+                  <button type="submit"
+                          :disabled="isSubmitting"
+                          class="touch-btn w-full disabled:opacity-60 text-white font-bold text-sm sm:text-base py-3.5 px-6 transition"
+                          :class="uiTheme === 'gmuend' ? 'bg-[#C8102E] hover:bg-[#a50d26]' : 'bg-zinc-900 hover:bg-zinc-800'">
+                    <span x-show="!isSubmitting">Übergabe rechtsverbindlich abschließen &amp; Protokoll senden</span>
+                    <span x-show="isSubmitting">PDF wird generiert &amp; E-Mails werden versendet …</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- =================================================================
+           TAB 3: ARCHIV (Abgeschlossene Lieferscheine, PDF & Versandstatus)
+           ================================================================= -->
+      <section x-show="activeTab === 'archive'" x-cloak aria-labelledby="heading-archive">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-zinc-300">
+          <div>
+            <h2 id="heading-archive" class="text-lg sm:text-xl font-bold text-zinc-900"
+                :class="uiTheme === 'erp' ? 'font-mono uppercase' : ''">
+              Beleg-Archiv (Abgeschlossene Lieferscheine)
+            </h2>
+            <p class="text-xs text-zinc-600 mt-0.5">
+              Alle digital quittierten Übergabeprotokolle inklusive PDF-Download und getrenntem Versandstatus (Schule &amp; osTicket).
+            </p>
           </div>
         </div>
 
-        <!-- Rechte Spalte (1/3): Bestehende Entwürfe & Vorbereitungen -->
-        <aside class="lg:col-span-1">
-          <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-            <h3 class="text-base font-bold text-slate-900 mb-1">
-              Entwürfe &amp; offene Vorbereitungen
-            </h3>
-            <p class="text-xs text-slate-500 mb-4">
-              Alle Lieferscheine im Status <strong>ENTWURF</strong> oder <strong>BEREIT</strong> können jederzeit bearbeitet oder gelöscht werden.
-            </p>
-
-            <div x-show="draftAndReadyNotes.length === 0" class="text-sm text-slate-500 py-6 text-center border border-dashed border-slate-200 rounded-xl">
-              Keine Entwürfe oder offenen Lieferscheine vorhanden.
+        <!-- Suchleiste im <search>-Element -->
+        <search class="mb-4 block">
+          <form @submit.prevent="loadArchivedNotes()" action="/api/delivery-notes" method="GET"
+                class="theme-card bg-white p-3 border border-zinc-300 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+            <div class="flex-1">
+              <label for="search-archive-input" class="block text-xs font-semibold text-zinc-600 mb-1"
+                     :class="uiTheme === 'erp' ? 'font-mono uppercase' : ''">
+                Volltextsuche über Beleg-Nr., Schule, Inventarnummer, osTicket-Nr. oder Empfänger
+              </label>
+              <input type="search"
+                     id="search-archive-input"
+                     name="search"
+                     x-model="searchArchive"
+                     @input.debounce.250ms="loadArchivedNotes()"
+                     autocorrect="off"
+                     autocapitalize="none"
+                     spellcheck="false"
+                     enterkeyhint="search"
+                     placeholder="z. B. LS-2026-0001, Musterschule, INV-2026-1041, 382814 oder Name …"
+                     class="w-full border border-zinc-300 px-3 py-1.5 text-sm text-zinc-900">
             </div>
+            <div class="flex items-end gap-2 sm:pt-5">
+              <button type="submit" class="touch-btn bg-zinc-900 hover:bg-zinc-800 text-white font-semibold text-xs px-4 py-2">
+                Suchen
+              </button>
+              <button type="button" x-show="searchArchive" @click="searchArchive = ''; loadArchivedNotes()"
+                      class="touch-btn bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-medium text-xs px-3 py-2 border border-zinc-300">
+                Zurücksetzen
+              </button>
+            </div>
+          </form>
+        </search>
 
-            <div class="space-y-3 max-h-[640px] overflow-y-auto pr-1">
-              <template x-for="n in draftAndReadyNotes" :key="n.id">
-                <div class="p-3.5 rounded-xl border transition"
-                     :class="form.id === n.id ? 'border-blue-500 bg-blue-50/40' : 'border-slate-200 bg-slate-50/60 hover:bg-slate-50'">
-                  <div class="flex items-center justify-between gap-2 mb-1">
-                    <span class="font-mono text-xs font-bold text-slate-700" x-text="n.delivery_number"></span>
-                    <span class="text-xs font-bold px-2 py-0.5 rounded"
-                          :class="n.status === 'ENTWURF' ? 'bg-amber-100 text-amber-900' : 'bg-blue-100 text-blue-800'"
-                          x-text="n.status"></span>
-                  </div>
-                  <p class="font-bold text-sm text-slate-900" x-text="n.school_name"></p>
-                  <p class="text-xs text-slate-600 mt-0.5">
-                    <span x-text="n.total_quantity + ' Gerät(e)'"></span>
-                    <span x-show="n.osticket_number" x-text="' · Ticket #' + n.osticket_number"></span>
-                  </p>
-                  <div class="mt-3 flex items-center justify-between gap-2 pt-2 border-t border-slate-200/80">
-                    <div class="flex gap-2">
-                      <button type="button" @click="editExistingNote(n)"
-                              class="text-xs font-semibold text-blue-700 hover:underline">
-                        Bearbeiten
+        <!-- Leerzustand Archiv -->
+        <div x-show="archivedNotes.length === 0" class="theme-card bg-white border border-zinc-300 p-8 text-center">
+          <p class="text-base font-bold text-zinc-800">Noch keine archivierten Lieferscheine vorhanden</p>
+          <p class="text-xs text-zinc-600 mt-1">
+            Sobald ein Lieferschein vor Ort unterschrieben wird, erscheint er hier inklusive PDF.
+          </p>
+        </div>
+
+        <!-- Responsive Datentabelle gemäß modern-web-guidance (Guide: responsive-table) -->
+        <div x-show="archivedNotes.length > 0"
+             tabindex="0"
+             role="region"
+             aria-labelledby="archive-table-caption"
+             class="table-wrapper">
+          <table>
+            <caption id="archive-table-caption" class="sr-only">
+              Archivierte und digital unterschriebene IT-Lieferscheine
+            </caption>
+            <thead class="bg-zinc-900 text-white text-xs font-mono uppercase tracking-wider">
+              <tr>
+                <th class="py-3 px-3.5 text-left">Beleg-Nr.</th>
+                <th class="py-3 px-3.5 text-left">Schule</th>
+                <th class="py-3 px-3.5 text-left">osTicket</th>
+                <th class="py-3 px-3.5 text-left">Geräte / Inventar</th>
+                <th class="py-3 px-3.5 text-left">Quittiert von</th>
+                <th class="py-3 px-3.5 text-left">Übergabe am</th>
+                <th class="py-3 px-3.5 text-left">Versand (Schule / osTicket)</th>
+                <th class="py-3 px-3.5 text-right">Aktionen</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-zinc-200 text-xs sm:text-sm">
+              <template x-for="note in archivedNotes" :key="note.id">
+                <tr class="hover:bg-zinc-50 transition">
+                  <th scope="row" class="py-3 px-3.5 font-mono font-bold text-zinc-900 text-left whitespace-nowrap">
+                    <span x-text="note.delivery_number"></span>
+                  </th>
+                  <td class="py-3 px-3.5 font-semibold text-zinc-900" x-text="note.school_name"></td>
+                  <td class="py-3 px-3.5">
+                    <span x-show="note.osticket_number"
+                          class="font-mono text-xs font-bold px-1.5 py-0.5 bg-zinc-100 text-zinc-800 border border-zinc-300"
+                          x-text="'#' + note.osticket_number"></span>
+                    <span x-show="!note.osticket_number" class="text-zinc-400">–</span>
+                  </td>
+                  <td class="py-3 px-3.5">
+                    <span class="font-semibold" x-text="note.total_quantity + ' Einh.'"></span>
+                    <span class="text-xs font-mono text-zinc-500 block"
+                          x-text="note.items.map(i => i.inventory_number).join(', ')"></span>
+                  </td>
+                  <td class="py-3 px-3.5">
+                    <span class="font-medium text-zinc-900" x-text="note.received_by || '–'"></span>
+                    <span class="text-xs text-zinc-500 block" x-text="'IT: ' + (note.delivered_by || '–')"></span>
+                  </td>
+                  <td class="py-3 px-3.5 whitespace-nowrap font-mono text-xs text-zinc-700"
+                      x-text="formatDateTime(note.completed_at)"></td>
+                  <td class="py-3 px-3.5">
+                    <div class="flex flex-col gap-1 items-start">
+                      <span class="inline-flex items-center gap-1 font-mono text-[11px] font-semibold px-1.5 py-0.5 border"
+                            :class="emailBadgeClass(note.email_school_status)">
+                        <span>Schule:</span>
+                        <span x-text="emailStatusLabel(note.email_school_status)"></span>
+                      </span>
+                      <span class="inline-flex items-center gap-1 font-mono text-[11px] font-semibold px-1.5 py-0.5 border"
+                            :class="emailBadgeClass(note.email_osticket_status)">
+                        <span>osTicket:</span>
+                        <span x-text="emailStatusLabel(note.email_osticket_status)"></span>
+                      </span>
+                    </div>
+                  </td>
+                  <td class="py-3 px-3.5 text-right whitespace-nowrap">
+                    <div class="inline-flex flex-wrap justify-end gap-1.5">
+                      <a :href="'/api/delivery-notes/' + note.id + '/pdf'"
+                         target="_blank"
+                         rel="noopener"
+                         class="bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-mono font-bold px-2.5 py-1.5">
+                        PDF
+                      </a>
+                      <button type="button"
+                              @click="resendEmails(note)"
+                              :disabled="resendingEmailId === note.id"
+                              title="E-Mail an Schule und osTicket erneut senden"
+                              class="bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-mono font-semibold px-2.5 py-1.5 border border-zinc-300">
+                        <span x-text="resendingEmailId === note.id ? '…' : 'Mail ↻'"></span>
                       </button>
-                      <button type="button" @click="deleteNote(n)"
-                              class="text-xs font-semibold text-red-600 hover:underline">
-                        Löschen
+                      <button type="button"
+                              @click="openArchiveDetails(note)"
+                              class="bg-white hover:bg-zinc-100 text-zinc-700 text-xs font-mono font-semibold px-2.5 py-1.5 border border-zinc-300">
+                        Details
                       </button>
                     </div>
-                    <button type="button" @click="openHandoverView(n)"
-                            class="text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white px-2.5 py-1.5 rounded-lg">
-                      Quittieren →
-                    </button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- =================================================================
+           TAB 4: VERWALTUNG (Schulen & IT-Mitarbeiter / Azubis)
+           ================================================================= -->
+      <section x-show="activeTab === 'admin'" x-cloak aria-labelledby="heading-admin">
+        <div class="mb-4 pb-3 border-b border-zinc-300">
+          <h2 id="heading-admin" class="text-lg sm:text-xl font-bold text-zinc-900"
+              :class="uiTheme === 'erp' ? 'font-mono uppercase' : ''">
+            Stammdaten-Verwaltung
+          </h2>
+          <p class="text-xs text-zinc-600 mt-0.5">
+            Pflege der Schulen (inkl. Standard-Sekretariats-E-Mail und CC) sowie der IT-Mitarbeiter/Azubis.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+          <!-- 1. Schulen verwalten -->
+          <div class="theme-card bg-white border border-zinc-300 p-5">
+            <div class="flex items-center justify-between pb-2.5 mb-4 border-b border-zinc-300">
+              <h3 id="heading-school-form" class="text-base font-bold text-zinc-900"
+                  :class="uiTheme === 'erp' ? 'font-mono uppercase' : ''">
+                Schulen (<span x-text="schools.length"></span>)
+              </h3>
+              <button type="button" x-show="schoolForm.id" @click="resetSchoolForm()"
+                      class="text-xs font-semibold text-zinc-600 hover:text-zinc-900 px-2 py-1 border border-zinc-300">
+                + Neue Schule
+              </button>
+            </div>
+
+            <form @submit.prevent="saveSchool()" action="/api/schools" method="POST" aria-labelledby="heading-school-form" class="mb-5 bg-zinc-50 p-3.5 border border-zinc-300">
+              <p class="text-xs font-mono font-bold uppercase text-zinc-600 mb-2.5"
+                 x-text="schoolForm.id ? 'SCHULE BEARBEITEN' : 'NEUE SCHULE ANLEGEN'"></p>
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-2.5">
+                <div class="sm:col-span-2">
+                  <label for="school-name" class="block text-xs font-semibold text-zinc-700 mb-1">
+                    Schulname <span class="text-red-600" aria-hidden="true">*</span>
+                  </label>
+                  <input type="text" id="school-name" name="name" x-model="schoolForm.name" required
+                         placeholder="z. B. Musterschule Nord GS"
+                         class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-sm">
+                </div>
+                <div>
+                  <label for="school-code" class="block text-xs font-semibold text-zinc-700 mb-1">
+                    Kürzel
+                  </label>
+                  <input type="text" id="school-code" name="short_code" x-model="schoolForm.short_code"
+                         autocorrect="off" autocapitalize="characters" spellcheck="false"
+                         placeholder="MSN-GS"
+                         class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-sm font-mono">
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-2.5">
+                <div>
+                  <label for="school-email" class="block text-xs font-semibold text-zinc-700 mb-1">
+                    E-Mail Schulsekretariat <span class="text-red-600" aria-hidden="true">*</span>
+                  </label>
+                  <input type="email" id="school-email" name="email" x-model="schoolForm.email" required
+                         autocorrect="off" autocapitalize="none" spellcheck="false"
+                         placeholder="sekretariat@schule.local"
+                         class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-sm">
+                </div>
+                <div>
+                  <label for="school-cc" class="block text-xs font-semibold text-zinc-700 mb-1">
+                    Optionale CC-Adresse
+                  </label>
+                  <input type="email" id="school-cc" name="cc_email" x-model="schoolForm.cc_email"
+                         autocorrect="off" autocapitalize="none" spellcheck="false"
+                         placeholder="rektorat@schule.local"
+                         class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-sm">
+                </div>
+              </div>
+
+              <div class="mb-2.5">
+                <label for="school-address" class="block text-xs font-semibold text-zinc-700 mb-1">
+                  Anschrift (für PDF-Kopf, optional)
+                </label>
+                <input type="text" id="school-address" name="address" x-model="schoolForm.address"
+                       placeholder="Straße Hausnr., PLZ Ort"
+                       class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-sm">
+              </div>
+
+              <div class="flex items-center justify-between pt-2">
+                <div class="flex items-center gap-2">
+                  <input type="checkbox" id="school-active" name="active" x-model="schoolForm.active" class="w-4 h-4">
+                  <label for="school-active" class="text-xs font-semibold text-zinc-700">Im Auswahlmenü aktiv</label>
+                </div>
+                <button type="submit" class="touch-btn bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs px-4 py-2">
+                  <span x-text="schoolForm.id ? 'Änderungen speichern' : 'Schule speichern'"></span>
+                </button>
+              </div>
+            </form>
+
+            <!-- Liste der Schulen -->
+            <div class="divide-y divide-zinc-200 max-h-[420px] overflow-y-auto">
+              <template x-for="s in schools" :key="s.id">
+                <div class="py-2.5 flex items-start justify-between gap-3">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <p class="font-bold text-sm text-zinc-900" x-text="s.name"></p>
+                      <span x-show="s.short_code" class="text-xs font-mono px-1.5 py-0.5 bg-zinc-100 border border-zinc-300 text-zinc-700" x-text="s.short_code"></span>
+                      <span x-show="!s.active" class="text-xs px-1.5 py-0.5 bg-red-100 text-red-700">Inaktiv</span>
+                    </div>
+                    <p class="text-xs text-zinc-600" x-text="'Sekretariat: ' + s.email"></p>
+                    <p x-show="s.cc_email" class="text-xs text-zinc-500" x-text="'CC: ' + s.cc_email"></p>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button type="button" @click="editSchool(s)" class="text-xs font-semibold text-zinc-800 hover:underline">Bearbeiten</button>
+                    <button type="button" @click="deleteSchool(s)" class="text-xs font-semibold text-red-600 hover:underline">Löschen</button>
                   </div>
                 </div>
               </template>
             </div>
           </div>
-        </aside>
 
-      </div>
-    </section>
-
-    <!-- ===================================================================
-         TAB 2b: ÜBERGABE & UNTERSCHRIFT VOR ORT (Stufe 2 – Mobile/iPad-First)
-         =================================================================== -->
-    <section x-show="activeTab === 'handover'" x-cloak aria-labelledby="heading-handover">
-      <div class="max-w-3xl mx-auto">
-
-        <!-- Zurück-Leiste -->
-        <div class="mb-4 flex items-center justify-between">
-          <button type="button" @click="switchTab('deliveries')"
-                  class="touch-btn inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700 hover:text-slate-900 bg-white px-3.5 py-2 rounded-xl border border-slate-300 shadow-sm">
-            <span>← Zurück zu offenen Auslieferungen</span>
-          </button>
-          <button type="button"
-                  x-show="currentHandoverNote && currentHandoverNote.status !== 'ABGESCHLOSSEN'"
-                  @click="editExistingNote(currentHandoverNote)"
-                  class="touch-btn text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white px-3 py-2 rounded-xl border border-slate-300">
-            Positionen bearbeiten
-          </button>
-        </div>
-
-        <!-- FALL A: Übergabe wurde soeben erfolgreich abgeschlossen -->
-        <div x-show="completedResultNote" class="bg-white rounded-2xl border-2 border-emerald-500 shadow-lg p-6 sm:p-8 mb-6">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-200">
-            <div>
-              <span class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-emerald-100 text-emerald-800">
-                ✓ Übergabe erfolgreich abgeschlossen
-              </span>
-              <h2 class="text-2xl font-bold text-slate-900 mt-2"
-                  x-text="completedResultNote ? ('Lieferschein ' + completedResultNote.delivery_number) : ''"></h2>
-              <p class="text-sm text-slate-600"
-                 x-text="completedResultNote ? (completedResultNote.school_name + ' · Quittiert von ' + completedResultNote.received_by) : ''"></p>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <a :href="completedResultNote ? ('/api/delivery-notes/' + completedResultNote.id + '/pdf') : '#'"
-                 target="_blank"
-                 rel="noopener"
-                 class="touch-btn inline-flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm px-4 py-2.5 rounded-xl shadow-sm">
-                📄 PDF anzeigen
-              </a>
-              <a :href="completedResultNote ? ('/api/delivery-notes/' + completedResultNote.id + '/pdf?download=true') : '#'"
-                 class="touch-btn inline-flex items-center justify-center bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm px-4 py-2.5 rounded-xl">
-                ⬇ PDF herunterladen
-              </a>
-            </div>
-          </div>
-
-          <!-- Versandstatus (Schule & osTicket getrennt) -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 my-5" x-show="completedResultNote">
-            <div class="p-4 rounded-xl border bg-slate-50">
-              <p class="text-xs font-bold uppercase text-slate-500 mb-1">1. E-Mail an Schulsekretariat</p>
-              <p class="text-sm font-medium text-slate-800 mb-2" x-text="completedResultNote?.recipient_email"></p>
-              <span class="inline-block text-xs font-bold px-2.5 py-1 rounded border"
-                    :class="emailBadgeClass(completedResultNote?.email_school_status)"
-                    x-text="emailStatusLabel(completedResultNote?.email_school_status)"></span>
-              <p x-show="completedResultNote?.email_school_error"
-                 class="text-xs text-red-700 mt-2 font-mono"
-                 x-text="completedResultNote?.email_school_error"></p>
-            </div>
-
-            <div class="p-4 rounded-xl border bg-slate-50">
-              <p class="text-xs font-bold uppercase text-slate-500 mb-1">2. Automatische osTicket-Zuordnung</p>
-              <p class="text-sm font-medium text-slate-800 mb-2"
-                 x-text="completedResultNote?.osticket_number ? ('Ticket #' + completedResultNote.osticket_number + ' (' + (osticketEmail || 'OSTICKET_EMAIL') + ')') : 'Keine osTicket-Nr. hinterlegt'"></p>
-              <span class="inline-block text-xs font-bold px-2.5 py-1 rounded border"
-                    :class="emailBadgeClass(completedResultNote?.email_osticket_status)"
-                    x-text="emailStatusLabel(completedResultNote?.email_osticket_status)"></span>
-              <p x-show="completedResultNote?.email_osticket_error"
-                 class="text-xs text-red-700 mt-2 font-mono"
-                 x-text="completedResultNote?.email_osticket_error"></p>
-            </div>
-          </div>
-
-          <div class="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-slate-200">
-            <button type="button"
-                    @click="resendEmails(completedResultNote)"
-                    :disabled="resendingEmailId === completedResultNote?.id"
-                    class="touch-btn bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-sm px-4 py-2.5 rounded-xl border border-slate-300">
-              <span x-text="resendingEmailId === completedResultNote?.id ? 'Sende E-Mails …' : '↻ E-Mail erneut senden'"></span>
-            </button>
-            <button type="button"
-                    @click="switchTab('deliveries')"
-                    class="touch-btn bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-6 py-2.5 rounded-xl">
-              Zurück zur Auslieferungsliste →
-            </button>
-          </div>
-        </div>
-
-        <!-- FALL B: Übergabe-Formular & Digitale Unterschrift -->
-        <div x-show="currentHandoverNote && !completedResultNote" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <!-- Kopfbereich: Kompakte Zusammenfassung -->
-          <div class="bg-slate-900 text-white p-5 sm:p-6">
-            <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-              <span class="font-mono text-xs uppercase tracking-wider px-2.5 py-1 rounded bg-blue-600 text-white font-bold"
-                    x-text="currentHandoverNote?.delivery_number"></span>
-              <span x-show="currentHandoverNote?.osticket_number"
-                    class="font-mono text-xs font-bold px-2.5 py-1 rounded bg-slate-800 text-sky-300 border border-slate-700"
-                    x-text="'osTicket #' + currentHandoverNote?.osticket_number"></span>
-            </div>
-            <h2 id="heading-handover" class="text-xl sm:text-2xl font-bold" x-text="currentHandoverNote?.school_name"></h2>
-            <div class="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs sm:text-sm text-slate-300">
-              <span x-show="currentHandoverNote?.ordered_by">
-                <strong>Besteller/in:</strong> <span x-text="currentHandoverNote?.ordered_by"></span>
-              </span>
-              <span x-show="currentHandoverNote?.room">
-                <strong>Raum/Ort:</strong> <span x-text="currentHandoverNote?.room"></span>
-              </span>
-              <span>
-                <strong>Sekretariat:</strong> <span x-text="currentHandoverNote?.recipient_email"></span>
-              </span>
-            </div>
-          </div>
-
-          <div class="p-5 sm:p-6">
-            <!-- Übersicht der zu übergebenden Geräte -->
-            <div class="mb-6">
-              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
-                Übergebene Geräte (<span x-text="currentHandoverNote?.total_quantity"></span> Einheiten)
+          <!-- 2. IT-Mitarbeiter / Azubis verwalten -->
+          <div class="theme-card bg-white border border-zinc-300 p-5">
+            <div class="flex items-center justify-between pb-2.5 mb-4 border-b border-zinc-300">
+              <h3 id="heading-staff-form" class="text-base font-bold text-zinc-900"
+                  :class="uiTheme === 'erp' ? 'font-mono uppercase' : ''">
+                IT-Mitarbeiter &amp; Azubis (<span x-text="staffList.length"></span>)
               </h3>
-              <div class="border border-slate-200 rounded-xl overflow-hidden">
-                <table class="w-full text-sm text-left">
-                  <thead class="bg-slate-100 text-slate-700 text-xs uppercase">
-                    <tr>
-                      <th class="py-2.5 px-3">Gerät / Typ</th>
-                      <th class="py-2.5 px-3">Inventar-Nr.</th>
-                      <th class="py-2.5 px-3 hidden sm:table-cell">Serien-Nr.</th>
-                      <th class="py-2.5 px-3 text-center">Menge</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-slate-200">
-                    <template x-for="item in (currentHandoverNote?.items || [])" :key="item.id">
-                      <tr>
-                        <td class="py-2.5 px-3 font-medium text-slate-900" x-text="item.device_type"></td>
-                        <td class="py-2.5 px-3 font-mono font-bold text-blue-700" x-text="item.inventory_number"></td>
-                        <td class="py-2.5 px-3 font-mono text-xs text-slate-600 hidden sm:table-cell" x-text="item.serial_number || '–'"></td>
-                        <td class="py-2.5 px-3 text-center font-bold" x-text="item.quantity"></td>
-                      </tr>
-                    </template>
-                  </tbody>
-                </table>
-              </div>
+              <button type="button" x-show="staffForm.id" @click="resetStaffForm()"
+                      class="text-xs font-semibold text-zinc-600 hover:text-zinc-900 px-2 py-1 border border-zinc-300">
+                + Neuer Mitarbeiter
+              </button>
             </div>
 
-            <!-- Vorbereitungs-Notiz -->
-            <div x-show="currentHandoverNote?.notes" class="mb-6 bg-amber-50 border-l-4 border-amber-400 p-3.5 rounded-r-xl text-sm text-amber-950">
-              <p class="font-bold text-xs uppercase tracking-wider text-amber-800 mb-0.5">Hinweis aus der Vorbereitung:</p>
-              <p x-text="currentHandoverNote?.notes"></p>
-            </div>
-
-            <!-- Fehleranzeige bei der Übergabe -->
-            <div x-show="handoverError" role="alert" class="mb-5 bg-red-50 border-l-4 border-red-600 p-4 rounded-r-xl text-sm text-red-900">
-              <p class="font-bold" x-text="handoverError"></p>
-            </div>
-
-            <!-- Übergabe-Formular -->
-            <form @submit.prevent="submitHandover()"
-                  action="/api/delivery-notes/complete"
-                  method="POST"
-                  aria-labelledby="heading-handover"
-                  novalidate>
-
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
-                <!-- Übergeben von (IT-Mitarbeiter / Azubi) -->
+            <form @submit.prevent="saveStaff()" action="/api/staff" method="POST" aria-labelledby="heading-staff-form" class="mb-5 bg-zinc-50 p-3.5 border border-zinc-300">
+              <p class="text-xs font-mono font-bold uppercase text-zinc-600 mb-2.5"
+                 x-text="staffForm.id ? 'MITARBEITER BEARBEITEN' : 'NEUEN MITARBEITER ANLEGEN'"></p>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-2.5">
                 <div>
-                  <label for="handover-delivered-by" class="block text-sm font-semibold text-slate-800 mb-1">
-                    Übergeben von (Schul-IT / Azubi) <span class="text-red-600" aria-hidden="true">*</span>
+                  <label for="staff-name" class="block text-xs font-semibold text-zinc-700 mb-1">
+                    Vor- und Nachname <span class="text-red-600" aria-hidden="true">*</span>
                   </label>
-                  <select id="handover-delivered-by"
-                          name="delivered_by_select"
-                          x-model="handoverForm.delivered_by_select"
-                          required
-                          class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-slate-900">
-                    <template x-for="staff in staffList.filter(s => s.active)" :key="staff.id">
-                      <option :value="staff.name" x-text="staff.name + (staff.role ? ' (' + staff.role + ')' : '')"></option>
-                    </template>
-                    <option value="__custom__">— Eigene Eingabe / Freitext … —</option>
-                  </select>
-
-                  <div x-show="handoverForm.delivered_by_select === '__custom__'" class="mt-2">
-                    <label for="handover-delivered-custom" class="block text-xs font-semibold text-slate-600 mb-1">
-                      Name des übergebenden Mitarbeiters <span class="text-red-600" aria-hidden="true">*</span>
-                    </label>
-                    <input type="text"
-                           id="handover-delivered-custom"
-                           name="delivered_by_custom"
-                           x-model="handoverForm.delivered_by_custom"
-                           placeholder="Vor- und Nachname"
-                           class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-slate-900">
-                  </div>
+                  <input type="text" id="staff-name" name="name" x-model="staffForm.name" required
+                         placeholder="z. B. Lukas Weber"
+                         class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-sm">
                 </div>
-
-                <!-- Angenommen von (Person vor Ort an der Schule) -->
                 <div>
-                  <label for="handover-received-by" class="block text-sm font-semibold text-slate-800 mb-1">
-                    Angenommen von (Person vor Ort) <span class="text-red-600" aria-hidden="true">*</span>
+                  <label for="staff-role" class="block text-xs font-semibold text-zinc-700 mb-1">
+                    Funktion / Rolle
                   </label>
-                  <input type="text"
-                         id="handover-received-by"
-                         name="received_by"
-                         x-model="handoverForm.received_by"
-                         required
-                         placeholder="z. B. Fr. Müller (Sekretariat) / Hr. Mayer (Hausmeister)"
-                         class="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-slate-900">
+                  <input type="text" id="staff-role" name="role" x-model="staffForm.role"
+                         placeholder="z. B. Azubi Fachinformatiker"
+                         class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-sm">
                 </div>
               </div>
 
-              <!-- Optionales Zusatz-Notizfeld bei der Übergabe -->
-              <div class="mb-6">
-                <label for="handover-notes" class="block text-sm font-semibold text-slate-800 mb-1">
-                  Bemerkungen bei der Übergabe vor Ort (optional)
+              <div class="mb-2.5">
+                <label for="staff-email" class="block text-xs font-semibold text-zinc-700 mb-1">
+                  E-Mail-Adresse (optional)
                 </label>
-                <textarea id="handover-notes"
-                          name="handover_notes"
-                          x-model="handoverForm.handover_notes"
-                          rows="2"
-                          placeholder="z. B. Abgegeben bei Hausmeister Hr. Mayer, Raum war abgeschlossen …"
-                          class="w-full rounded-xl border border-slate-300 bg-white p-3 text-slate-900"></textarea>
+                <input type="email" id="staff-email" name="email" x-model="staffForm.email"
+                       autocorrect="off" autocapitalize="none" spellcheck="false"
+                       placeholder="l.weber@kommune.local"
+                       class="w-full border border-zinc-300 bg-white px-2.5 py-1.5 text-sm">
               </div>
 
-              <!-- Digitale Unterschrift (signature_pad) -->
-              <div class="mb-6">
-                <div class="flex items-center justify-between mb-1.5">
-                  <label class="block text-sm font-bold text-slate-900">
-                    Digitale Unterschrift des Empfängers <span class="text-red-600" aria-hidden="true">*</span>
-                  </label>
-                  <button type="button"
-                          @click="clearSignature()"
-                          class="text-xs font-semibold text-slate-700 hover:text-red-700 bg-slate-100 hover:bg-red-50 px-3 py-1.5 rounded-lg border border-slate-300 transition">
-                    Unterschrift löschen
-                  </button>
+              <div class="flex items-center justify-between pt-2">
+                <div class="flex items-center gap-2">
+                  <input type="checkbox" id="staff-active" name="active" x-model="staffForm.active" class="w-4 h-4">
+                  <label for="staff-active" class="text-xs font-semibold text-zinc-700">Im Dropdown „Übergeben von“ aktiv</label>
                 </div>
-                <div class="signature-canvas-wrapper rounded-2xl border-2 border-slate-400 bg-white overflow-hidden shadow-inner">
-                  <canvas id="signature-canvas" aria-label="Unterschriftsfeld zur digitalen Quittierung"></canvas>
-                </div>
-                <p class="text-xs text-slate-500 mt-1.5">
-                  Bitte mit Apple Pencil, Finger oder Maus unterschreiben. Mit der Unterschrift wird der Empfang der oben genannten IT-Geräte bestätigt.
-                </p>
-              </div>
-
-              <!-- Hauptbutton: Übergabe abschließen & versenden -->
-              <div class="pt-3 border-t border-slate-200">
-                <button type="submit"
-                        :disabled="isSubmitting"
-                        class="touch-btn w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-base py-4 px-6 rounded-2xl shadow-md transition flex items-center justify-center gap-2">
-                  <span x-show="!isSubmitting">✓ Übergabe abschließen &amp; versenden</span>
-                  <span x-show="isSubmitting">PDF wird generiert &amp; E-Mails werden versendet …</span>
+                <button type="submit" class="touch-btn bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs px-4 py-2">
+                  <span x-text="staffForm.id ? 'Änderungen speichern' : 'Mitarbeiter speichern'"></span>
                 </button>
               </div>
             </form>
-          </div>
-        </div>
 
-      </div>
-    </section>
-
-    <!-- ===================================================================
-         TAB 3: ARCHIV (Abgeschlossene Lieferscheine, PDF & Versandstatus)
-         =================================================================== -->
-    <section x-show="activeTab === 'archive'" x-cloak aria-labelledby="heading-archive">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div>
-          <h2 id="heading-archive" class="text-xl sm:text-2xl font-bold text-slate-900">
-            Archiv abgeschlossener Lieferscheine
-          </h2>
-          <p class="text-sm text-slate-600 mt-0.5">
-            Alle digital unterschriebenen Übergabeprotokolle mit PDF-Abruf und getrenntem Versandstatus (Schule &amp; osTicket).
-          </p>
-        </div>
-      </div>
-
-      <!-- Suchleiste im <search>-Element -->
-      <search class="mb-6 block">
-        <form @submit.prevent="loadArchivedNotes()" action="/api/delivery-notes" method="GET" class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
-          <div class="flex-1">
-            <label for="search-archive-input" class="block text-xs font-semibold text-slate-600 mb-1">
-              Suche nach Schule, Inventarnummer, osTicket-Nummer, Empfänger oder Lieferschein-Nummer
-            </label>
-            <input type="search"
-                   id="search-archive-input"
-                   name="search"
-                   x-model="searchArchive"
-                   @input.debounce.250ms="loadArchivedNotes()"
-                   autocorrect="off"
-                   autocapitalize="none"
-                   spellcheck="false"
-                   enterkeyhint="search"
-                   placeholder="z. B. LS-2026-0001, Musterschule, INV-2026-1041, 382814 oder Name …"
-                   class="w-full rounded-lg border border-slate-300 px-3.5 py-2 text-slate-900">
-          </div>
-          <div class="flex items-end gap-2 sm:pt-5">
-            <button type="submit" class="touch-btn bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm px-5 py-2.5 rounded-lg">
-              Suchen
-            </button>
-            <button type="button" x-show="searchArchive" @click="searchArchive = ''; loadArchivedNotes()"
-                    class="touch-btn bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm px-3.5 py-2.5 rounded-lg">
-              Zurücksetzen
-            </button>
-          </div>
-        </form>
-      </search>
-
-      <!-- Leerzustand Archiv -->
-      <div x-show="archivedNotes.length === 0" class="bg-white rounded-2xl border border-slate-200 p-10 text-center shadow-sm">
-        <p class="text-lg font-bold text-slate-800">Noch keine archivierten Lieferscheine gefunden</p>
-        <p class="text-sm text-slate-600 mt-1">
-          Sobald ein Lieferschein vor Ort unterschrieben und abgeschlossen wird, erscheint er hier inklusive PDF.
-        </p>
-      </div>
-
-      <!-- Responsive Datentabelle gemäß modern-web-guidance (Guide: responsive-table) -->
-      <div x-show="archivedNotes.length > 0"
-           tabindex="0"
-           role="region"
-           aria-labelledby="archive-table-caption"
-           class="table-wrapper shadow-sm">
-        <table>
-          <caption id="archive-table-caption" class="sr-only">
-            Archivierte und digital unterschriebene IT-Lieferscheine
-          </caption>
-          <thead class="bg-slate-900 text-white text-xs uppercase tracking-wider">
-            <tr>
-              <th class="py-3.5 px-4 text-left">Lieferschein-Nr.</th>
-              <th class="py-3.5 px-4 text-left">Schule</th>
-              <th class="py-3.5 px-4 text-left">osTicket</th>
-              <th class="py-3.5 px-4 text-left">Geräte</th>
-              <th class="py-3.5 px-4 text-left">Quittiert von</th>
-              <th class="py-3.5 px-4 text-left">Übergabe am</th>
-              <th class="py-3.5 px-4 text-left">E-Mail-Status (Schule / osTicket)</th>
-              <th class="py-3.5 px-4 text-right">Aktionen</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-200 text-sm">
-            <template x-for="note in archivedNotes" :key="note.id">
-              <tr class="hover:bg-slate-50/90 transition">
-                <th scope="row" class="py-3.5 px-4 font-mono font-bold text-slate-900 text-left whitespace-nowrap">
-                  <span x-text="note.delivery_number"></span>
-                </th>
-                <td class="py-3.5 px-4 font-semibold text-slate-900" x-text="note.school_name"></td>
-                <td class="py-3.5 px-4">
-                  <span x-show="note.osticket_number"
-                        class="font-mono text-xs font-bold px-2 py-0.5 rounded bg-sky-50 text-sky-800 border border-sky-200"
-                        x-text="'#' + note.osticket_number"></span>
-                  <span x-show="!note.osticket_number" class="text-slate-400">–</span>
-                </td>
-                <td class="py-3.5 px-4">
-                  <span class="font-semibold" x-text="note.total_quantity + ' Einh.'"></span>
-                  <span class="text-xs text-slate-500 block"
-                        x-text="note.items.map(i => i.inventory_number).join(', ')"></span>
-                </td>
-                <td class="py-3.5 px-4">
-                  <span class="font-medium text-slate-900" x-text="note.received_by || '–'"></span>
-                  <span class="text-xs text-slate-500 block" x-text="'IT: ' + (note.delivered_by || '–')"></span>
-                </td>
-                <td class="py-3.5 px-4 whitespace-nowrap text-xs text-slate-700"
-                    x-text="formatDateTime(note.completed_at)"></td>
-                <td class="py-3.5 px-4">
-                  <div class="flex flex-col gap-1 items-start">
-                    <span class="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded border"
-                          :class="emailBadgeClass(note.email_school_status)">
-                      <span>Schule:</span>
-                      <span x-text="emailStatusLabel(note.email_school_status)"></span>
-                    </span>
-                    <span class="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded border"
-                          :class="emailBadgeClass(note.email_osticket_status)">
-                      <span>osTicket:</span>
-                      <span x-text="emailStatusLabel(note.email_osticket_status)"></span>
-                    </span>
+            <!-- Liste der Mitarbeiter -->
+            <div class="divide-y divide-zinc-200 max-h-[420px] overflow-y-auto">
+              <template x-for="m in staffList" :key="m.id">
+                <div class="py-2.5 flex items-start justify-between gap-3">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <p class="font-bold text-sm text-zinc-900" x-text="m.name"></p>
+                      <span x-show="!m.active" class="text-xs px-1.5 py-0.5 bg-red-100 text-red-700">Inaktiv</span>
+                    </div>
+                    <p x-show="m.role" class="text-xs text-zinc-600" x-text="m.role"></p>
+                    <p x-show="m.email" class="text-xs text-zinc-500" x-text="m.email"></p>
                   </div>
-                </td>
-                <td class="py-3.5 px-4 text-right whitespace-nowrap">
-                  <div class="inline-flex flex-wrap justify-end gap-1.5">
-                    <a :href="'/api/delivery-notes/' + note.id + '/pdf'"
-                       target="_blank"
-                       rel="noopener"
-                       class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg">
-                      PDF
-                    </a>
-                    <button type="button"
-                            @click="resendEmails(note)"
-                            :disabled="resendingEmailId === note.id"
-                            title="E-Mail an Schule und osTicket erneut senden"
-                            class="bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-300">
-                      <span x-text="resendingEmailId === note.id ? '…' : '↻ E-Mail'"></span>
-                    </button>
-                    <button type="button"
-                            @click="openArchiveDetails(note)"
-                            class="bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-300">
-                      Details
-                    </button>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button type="button" @click="editStaff(m)" class="text-xs font-semibold text-zinc-800 hover:underline">Bearbeiten</button>
+                    <button type="button" @click="deleteStaff(m)" class="text-xs font-semibold text-red-600 hover:underline">Löschen</button>
                   </div>
-                </td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- ===================================================================
-         TAB 4: VERWALTUNG (Schulen & IT-Mitarbeiter / Azubis)
-         =================================================================== -->
-    <section x-show="activeTab === 'admin'" x-cloak aria-labelledby="heading-admin">
-      <div class="mb-6">
-        <h2 id="heading-admin" class="text-xl sm:text-2xl font-bold text-slate-900">
-          Stammdaten-Verwaltung
-        </h2>
-        <p class="text-sm text-slate-600 mt-0.5">
-          Pflege der Schulen (inkl. Standard-Sekretariats-E-Mail und CC) sowie der IT-Mitarbeiter/Azubis für die Übergabe-Auswahl.
-        </p>
-      </div>
-
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-        <!-- 1. Schulen verwalten -->
-        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 sm:p-6">
-          <div class="flex items-center justify-between pb-3 mb-4 border-b border-slate-200">
-            <h3 id="heading-school-form" class="text-lg font-bold text-slate-900">
-              Schulen (<span x-text="schools.length"></span>)
-            </h3>
-            <button type="button" x-show="schoolForm.id" @click="resetSchoolForm()"
-                    class="text-xs font-semibold text-slate-600 hover:text-slate-900 px-2.5 py-1 rounded border">
-              + Neue Schule
-            </button>
+                </div>
+              </template>
+            </div>
           </div>
 
-          <form @submit.prevent="saveSchool()" action="/api/schools" method="POST" aria-labelledby="heading-school-form" class="mb-6 bg-slate-50 p-4 rounded-xl border border-slate-200">
-            <p class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3"
-               x-text="schoolForm.id ? 'Schule bearbeiten' : 'Neue Schule hinzufügen'"></p>
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
-              <div class="sm:col-span-2">
-                <label for="school-name" class="block text-xs font-semibold text-slate-700 mb-1">
-                  Schulname <span class="text-red-600" aria-hidden="true">*</span>
-                </label>
-                <input type="text" id="school-name" name="name" x-model="schoolForm.name" required
-                       placeholder="z. B. Musterschule Nord GS"
-                       class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-              </div>
-              <div>
-                <label for="school-code" class="block text-xs font-semibold text-slate-700 mb-1">
-                  Kürzel (optional)
-                </label>
-                <input type="text" id="school-code" name="short_code" x-model="schoolForm.short_code"
-                       autocorrect="off" autocapitalize="characters" spellcheck="false"
-                       placeholder="MSN-GS"
-                       class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-              </div>
-            </div>
-
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-              <div>
-                <label for="school-email" class="block text-xs font-semibold text-slate-700 mb-1">
-                  E-Mail Schulsekretariat <span class="text-red-600" aria-hidden="true">*</span>
-                </label>
-                <input type="email" id="school-email" name="email" x-model="schoolForm.email" required
-                       autocorrect="off" autocapitalize="none" spellcheck="false"
-                       placeholder="sekretariat@schule.local"
-                       class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-              </div>
-              <div>
-                <label for="school-cc" class="block text-xs font-semibold text-slate-700 mb-1">
-                  Optionale CC-Adresse
-                </label>
-                <input type="email" id="school-cc" name="cc_email" x-model="schoolForm.cc_email"
-                       autocorrect="off" autocapitalize="none" spellcheck="false"
-                       placeholder="rektorat@schule.local"
-                       class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-              </div>
-            </div>
-
-            <div class="mb-3">
-              <label for="school-address" class="block text-xs font-semibold text-slate-700 mb-1">
-                Anschrift (für PDF-Kopf, optional)
-              </label>
-              <input type="text" id="school-address" name="address" x-model="schoolForm.address"
-                     placeholder="Straße Hausnr., PLZ Ort"
-                     class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-            </div>
-
-            <div class="flex items-center justify-between pt-2">
-              <div class="flex items-center gap-2">
-                <input type="checkbox" id="school-active" name="active" x-model="schoolForm.active" class="w-4 h-4 rounded">
-                <label for="school-active" class="text-xs font-semibold text-slate-700">Im Auswahlmenü aktiv</label>
-              </div>
-              <button type="submit" class="touch-btn bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2.5 rounded-lg">
-                <span x-text="schoolForm.id ? 'Änderungen speichern' : 'Schule speichern'"></span>
-              </button>
-            </div>
-          </form>
-
-          <!-- Liste der Schulen -->
-          <div class="divide-y divide-slate-200 max-h-[420px] overflow-y-auto">
-            <template x-for="s in schools" :key="s.id">
-              <div class="py-3 flex items-start justify-between gap-3">
-                <div>
-                  <div class="flex items-center gap-2">
-                    <p class="font-bold text-sm text-slate-900" x-text="s.name"></p>
-                    <span x-show="s.short_code" class="text-xs font-mono px-1.5 py-0.5 bg-slate-100 rounded text-slate-600" x-text="s.short_code"></span>
-                    <span x-show="!s.active" class="text-xs px-1.5 py-0.5 bg-red-100 text-red-700 rounded">Inaktiv</span>
-                  </div>
-                  <p class="text-xs text-slate-600" x-text="'Sekretariat: ' + s.email"></p>
-                  <p x-show="s.cc_email" class="text-xs text-slate-500" x-text="'CC: ' + s.cc_email"></p>
-                </div>
-                <div class="flex items-center gap-2 shrink-0">
-                  <button type="button" @click="editSchool(s)" class="text-xs font-semibold text-blue-700 hover:underline">Bearbeiten</button>
-                  <button type="button" @click="deleteSchool(s)" class="text-xs font-semibold text-red-600 hover:underline">Löschen</button>
-                </div>
-              </div>
-            </template>
-          </div>
         </div>
+      </section>
 
-        <!-- 2. IT-Mitarbeiter / Azubis verwalten -->
-        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 sm:p-6">
-          <div class="flex items-center justify-between pb-3 mb-4 border-b border-slate-200">
-            <h3 id="heading-staff-form" class="text-lg font-bold text-slate-900">
-              IT-Mitarbeiter &amp; Azubis (<span x-text="staffList.length"></span>)
-            </h3>
-            <button type="button" x-show="staffForm.id" @click="resetStaffForm()"
-                    class="text-xs font-semibold text-slate-600 hover:text-slate-900 px-2.5 py-1 rounded border">
-              + Neuer Mitarbeiter
-            </button>
-          </div>
-
-          <form @submit.prevent="saveStaff()" action="/api/staff" method="POST" aria-labelledby="heading-staff-form" class="mb-6 bg-slate-50 p-4 rounded-xl border border-slate-200">
-            <p class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3"
-               x-text="staffForm.id ? 'Mitarbeiter bearbeiten' : 'Neuen Mitarbeiter / Azubi hinzufügen'"></p>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-              <div>
-                <label for="staff-name" class="block text-xs font-semibold text-slate-700 mb-1">
-                  Vor- und Nachname <span class="text-red-600" aria-hidden="true">*</span>
-                </label>
-                <input type="text" id="staff-name" name="name" x-model="staffForm.name" required
-                       placeholder="z. B. Lukas Weber"
-                       class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-              </div>
-              <div>
-                <label for="staff-role" class="block text-xs font-semibold text-slate-700 mb-1">
-                  Funktion / Rolle (optional)
-                </label>
-                <input type="text" id="staff-role" name="role" x-model="staffForm.role"
-                       placeholder="z. B. Azubi Fachinformatiker"
-                       class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-              </div>
-            </div>
-
-            <div class="mb-3">
-              <label for="staff-email" class="block text-xs font-semibold text-slate-700 mb-1">
-                E-Mail-Adresse (optional)
-              </label>
-              <input type="email" id="staff-email" name="email" x-model="staffForm.email"
-                     autocorrect="off" autocapitalize="none" spellcheck="false"
-                     placeholder="l.weber@kommune.local"
-                     class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
-            </div>
-
-            <div class="flex items-center justify-between pt-2">
-              <div class="flex items-center gap-2">
-                <input type="checkbox" id="staff-active" name="active" x-model="staffForm.active" class="w-4 h-4 rounded">
-                <label for="staff-active" class="text-xs font-semibold text-slate-700">Im Dropdown „Übergeben von“ aktiv</label>
-              </div>
-              <button type="submit" class="touch-btn bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2.5 rounded-lg">
-                <span x-text="staffForm.id ? 'Änderungen speichern' : 'Mitarbeiter speichern'"></span>
-              </button>
-            </div>
-          </form>
-
-          <!-- Liste der Mitarbeiter -->
-          <div class="divide-y divide-slate-200 max-h-[420px] overflow-y-auto">
-            <template x-for="m in staffList" :key="m.id">
-              <div class="py-3 flex items-start justify-between gap-3">
-                <div>
-                  <div class="flex items-center gap-2">
-                    <p class="font-bold text-sm text-slate-900" x-text="m.name"></p>
-                    <span x-show="!m.active" class="text-xs px-1.5 py-0.5 bg-red-100 text-red-700 rounded">Inaktiv</span>
-                  </div>
-                  <p x-show="m.role" class="text-xs text-slate-600" x-text="m.role"></p>
-                  <p x-show="m.email" class="text-xs text-slate-500" x-text="m.email"></p>
-                </div>
-                <div class="flex items-center gap-2 shrink-0">
-                  <button type="button" @click="editStaff(m)" class="text-xs font-semibold text-blue-700 hover:underline">Bearbeiten</button>
-                  <button type="button" @click="deleteStaff(m)" class="text-xs font-semibold text-red-600 hover:underline">Löschen</button>
-                </div>
-              </div>
-            </template>
-          </div>
-        </div>
-
-      </div>
-    </section>
-
-  </main>
+    </main>
+  </div>
 
   <!-- =====================================================================
        MODAL 1: Kamera-Barcode-Scanner (natives <dialog> nach Guide: dialog)
        ===================================================================== -->
   <dialog id="scanner-dialog" closedby="any" aria-labelledby="scanner-dialog-title" @close="stopBarcodeScanner()">
     <div class="p-5 sm:p-6 bg-white">
-      <div class="flex items-center justify-between pb-3 mb-4 border-b border-slate-200">
-        <h1 id="scanner-dialog-title" class="text-lg font-bold text-slate-900">
-          Barcode / QR-Code scannen
+      <div class="flex items-center justify-between pb-3 mb-4 border-b border-zinc-200">
+        <h1 id="scanner-dialog-title" class="text-base font-mono font-bold uppercase text-zinc-900">
+          BARCODE / QR-CODE SCANNEN
         </h1>
-        <button type="button" @click="closeBarcodeScanner()" class="text-sm font-semibold text-slate-500 hover:text-slate-900 px-2 py-1" aria-label="Scanner schließen">
+        <button type="button" @click="closeBarcodeScanner()" class="text-sm font-semibold text-zinc-500 hover:text-zinc-900 px-2 py-1" aria-label="Scanner schließen">
           ✕
         </button>
       </div>
 
-      <div id="qr-reader" class="w-full rounded-xl overflow-hidden bg-slate-900 min-h-[220px] mb-4"></div>
+      <div id="qr-reader" class="w-full overflow-hidden bg-zinc-900 min-h-[220px] mb-4"></div>
 
-      <div x-show="scannerError" class="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-300 text-xs text-amber-900" x-text="scannerError"></div>
+      <div x-show="scannerError" class="mb-4 p-3 bg-amber-50 border border-amber-300 text-xs text-amber-900" x-text="scannerError"></div>
 
       <form @submit.prevent="applyScannedCode(scannerManualCode)" action="#scanner" method="POST" class="space-y-3">
         <div>
-          <label for="scanner-manual-input" class="block text-xs font-semibold text-slate-700 mb-1">
+          <label for="scanner-manual-input" class="block text-xs font-semibold text-zinc-700 mb-1">
             Oder Barcode per Handscanner / Tastatur eingeben:
           </label>
           <input type="text"
@@ -1313,13 +1642,13 @@
                  autocapitalize="none"
                  spellcheck="false"
                  placeholder="Code scannen oder eintippen …"
-                 class="w-full rounded-lg border border-slate-300 px-3.5 py-2 font-mono text-sm">
+                 class="w-full border border-zinc-300 px-3 py-2 font-mono text-sm">
         </div>
         <div class="flex justify-end gap-2">
-          <button type="button" @click="closeBarcodeScanner()" class="px-4 py-2 rounded-lg border border-slate-300 text-sm font-semibold text-slate-700">
+          <button type="button" @click="closeBarcodeScanner()" class="px-4 py-2 border border-zinc-300 text-xs font-semibold text-zinc-700">
             Abbrechen
           </button>
-          <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold">
+          <button type="submit" class="px-4 py-2 bg-zinc-900 text-white text-xs font-bold">
             Code übernehmen
           </button>
         </div>
@@ -1332,23 +1661,23 @@
        ===================================================================== -->
   <dialog id="detail-dialog" closedby="any" aria-labelledby="detail-dialog-title">
     <div class="p-5 sm:p-6 bg-white" x-show="selectedArchiveNote">
-      <div class="flex items-start justify-between pb-3 mb-4 border-b border-slate-200">
+      <div class="flex items-start justify-between pb-3 mb-4 border-b border-zinc-200">
         <div>
-          <span class="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-900 text-white"
+          <span class="font-mono text-xs font-bold px-2 py-0.5 bg-zinc-900 text-white"
                 x-text="selectedArchiveNote?.delivery_number"></span>
-          <h1 id="detail-dialog-title" class="text-xl font-bold text-slate-900 mt-1"
+          <h1 id="detail-dialog-title" class="text-xl font-bold text-zinc-900 mt-1"
               x-text="selectedArchiveNote?.school_name"></h1>
         </div>
         <button type="button" @click="closeArchiveDetails()" autofocus
-                class="text-sm font-semibold text-slate-500 hover:text-slate-900 px-2.5 py-1 rounded border border-slate-200"
+                class="text-xs font-semibold text-zinc-600 hover:text-zinc-900 px-2.5 py-1 border border-zinc-300"
                 aria-label="Detailansicht schließen">
           Schließen ✕
         </button>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm mb-4">
-        <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-          <p class="text-xs font-bold uppercase text-slate-500 mb-1">Übergabe-Details</p>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs sm:text-sm mb-4">
+        <div class="bg-zinc-50 p-3.5 border border-zinc-300">
+          <p class="font-mono text-xs font-bold uppercase text-zinc-500 mb-1">Übergabe-Details</p>
           <p><strong>Übergeben von:</strong> <span x-text="selectedArchiveNote?.delivered_by || '–'"></span></p>
           <p><strong>Angenommen von:</strong> <span x-text="selectedArchiveNote?.received_by || '–'"></span></p>
           <p><strong>Zeitpunkt:</strong> <span x-text="formatDateTime(selectedArchiveNote?.completed_at)"></span></p>
@@ -1356,18 +1685,18 @@
           <p x-show="selectedArchiveNote?.osticket_number"><strong>osTicket:</strong> <span class="font-mono" x-text="'#' + selectedArchiveNote?.osticket_number"></span></p>
         </div>
 
-        <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-          <p class="text-xs font-bold uppercase text-slate-500 mb-1">E-Mail-Versandprotokoll</p>
+        <div class="bg-zinc-50 p-3.5 border border-zinc-300">
+          <p class="font-mono text-xs font-bold uppercase text-zinc-500 mb-1">E-Mail-Versandprotokoll</p>
           <div class="mb-2">
-            <span class="text-xs text-slate-600 block" x-text="'Schule (' + selectedArchiveNote?.recipient_email + '):'"></span>
-            <span class="inline-block text-xs font-bold px-2 py-0.5 rounded border mt-0.5"
+            <span class="text-xs text-zinc-600 block" x-text="'Schule (' + selectedArchiveNote?.recipient_email + '):'"></span>
+            <span class="inline-block font-mono text-xs font-bold px-2 py-0.5 border mt-0.5"
                   :class="emailBadgeClass(selectedArchiveNote?.email_school_status)"
                   x-text="emailStatusLabel(selectedArchiveNote?.email_school_status)"></span>
             <p x-show="selectedArchiveNote?.email_school_error" class="text-xs text-red-700 font-mono mt-1" x-text="selectedArchiveNote?.email_school_error"></p>
           </div>
           <div>
-            <span class="text-xs text-slate-600 block">osTicket-Anbindung:</span>
-            <span class="inline-block text-xs font-bold px-2 py-0.5 rounded border mt-0.5"
+            <span class="text-xs text-zinc-600 block">osTicket-Anbindung:</span>
+            <span class="inline-block font-mono text-xs font-bold px-2 py-0.5 border mt-0.5"
                   :class="emailBadgeClass(selectedArchiveNote?.email_osticket_status)"
                   x-text="emailStatusLabel(selectedArchiveNote?.email_osticket_status)"></span>
             <p x-show="selectedArchiveNote?.email_osticket_error" class="text-xs text-red-700 font-mono mt-1" x-text="selectedArchiveNote?.email_osticket_error"></p>
@@ -1376,9 +1705,9 @@
       </div>
 
       <!-- Geräteliste -->
-      <div class="mb-4 border border-slate-200 rounded-xl overflow-hidden">
+      <div class="mb-4 border border-zinc-300 overflow-hidden">
         <table class="w-full text-xs sm:text-sm text-left">
-          <thead class="bg-slate-100 text-slate-700 text-xs uppercase">
+          <thead class="bg-zinc-100 text-zinc-700 font-mono text-xs uppercase border-b border-zinc-300">
             <tr>
               <th class="py-2 px-3">Gerät / Typ</th>
               <th class="py-2 px-3">Inventar-Nr.</th>
@@ -1386,13 +1715,13 @@
               <th class="py-2 px-3 text-center">Menge</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-200">
+          <tbody class="divide-y divide-zinc-200">
             <template x-for="item in (selectedArchiveNote?.items || [])" :key="item.id">
               <tr>
                 <td class="py-2 px-3 font-medium" x-text="item.device_type"></td>
-                <td class="py-2 px-3 font-mono font-bold text-blue-700" x-text="item.inventory_number"></td>
-                <td class="py-2 px-3 font-mono text-slate-600" x-text="item.serial_number || '–'"></td>
-                <td class="py-2 px-3 text-center font-bold" x-text="item.quantity"></td>
+                <td class="py-2 px-3 font-mono font-bold text-zinc-900" x-text="item.inventory_number"></td>
+                <td class="py-2 px-3 font-mono text-zinc-600" x-text="item.serial_number || '–'"></td>
+                <td class="py-2 px-3 text-center font-mono font-bold" x-text="item.quantity"></td>
               </tr>
             </template>
           </tbody>
@@ -1400,28 +1729,28 @@
       </div>
 
       <!-- Gespeicherte Unterschrift -->
-      <div x-show="selectedArchiveNote?.signature_data" class="mb-5 p-3 bg-slate-50 rounded-xl border border-slate-200 text-center">
-        <p class="text-xs font-bold uppercase text-slate-500 mb-1">Hinterlegte digitale Unterschrift</p>
-        <img :src="selectedArchiveNote?.signature_data" alt="Digitale Unterschrift" class="max-h-24 mx-auto object-contain bg-white border rounded p-1">
+      <div x-show="selectedArchiveNote?.signature_data" class="mb-5 p-3 bg-zinc-50 border border-zinc-300 text-center">
+        <p class="font-mono text-xs font-bold uppercase text-zinc-500 mb-1">Hinterlegte digitale Unterschrift</p>
+        <img :src="selectedArchiveNote?.signature_data" alt="Digitale Unterschrift" class="max-h-24 mx-auto object-contain bg-white border p-1">
       </div>
 
-      <div class="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-200">
+      <div class="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-zinc-200">
         <button type="button"
                 @click="resendEmails(selectedArchiveNote)"
                 :disabled="resendingEmailId === selectedArchiveNote?.id"
-                class="touch-btn bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs sm:text-sm font-semibold px-4 py-2 rounded-xl border border-slate-300">
-          ↻ E-Mail erneut senden
+                class="touch-btn bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-semibold px-4 py-2 border border-zinc-300">
+          E-Mail erneut senden
         </button>
         <div class="flex gap-2">
           <a :href="selectedArchiveNote ? ('/api/delivery-notes/' + selectedArchiveNote.id + '/pdf') : '#'"
              target="_blank"
              rel="noopener"
-             class="touch-btn bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-bold px-4 py-2 rounded-xl">
-            📄 PDF öffnen
+             class="touch-btn bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-bold px-4 py-2">
+            PDF öffnen
           </a>
           <a :href="selectedArchiveNote ? ('/api/delivery-notes/' + selectedArchiveNote.id + '/pdf?download=true') : '#'"
-             class="touch-btn bg-slate-900 hover:bg-slate-800 text-white text-xs sm:text-sm font-semibold px-4 py-2 rounded-xl">
-            ⬇ Download
+             class="touch-btn bg-white hover:bg-zinc-100 text-zinc-900 border border-zinc-300 text-xs font-semibold px-4 py-2">
+            Download
           </a>
         </div>
       </div>
@@ -1433,18 +1762,18 @@
        ===================================================================== -->
   <dialog id="login-dialog" closedby="none" aria-labelledby="login-dialog-title">
     <div class="p-6 bg-white max-w-sm mx-auto">
-      <h1 id="login-dialog-title" class="text-xl font-bold text-slate-900 mb-1">
-        Anmeldung erforderlich
+      <h1 id="login-dialog-title" class="text-lg font-mono font-bold uppercase text-zinc-900 mb-1">
+        ANMELDUNG ERFORDERLICH
       </h1>
-      <p class="text-xs text-slate-600 mb-4">
+      <p class="text-xs text-zinc-600 mb-4">
         Bitte geben Sie die Schul-IT PIN oder das konfigurierte Passwort ein.
       </p>
 
-      <div x-show="loginError" role="alert" class="mb-3 p-3 rounded-lg bg-red-50 border border-red-300 text-xs font-semibold text-red-800" x-text="loginError"></div>
+      <div x-show="loginError" role="alert" class="mb-3 p-3 bg-red-50 border border-red-300 text-xs font-semibold text-red-800" x-text="loginError"></div>
 
       <form @submit.prevent="submitLogin()" action="/api/auth/login" method="POST" class="space-y-4">
         <div>
-          <label for="login-pin-input" class="block text-sm font-semibold text-slate-800 mb-1">
+          <label for="login-pin-input" class="block text-xs font-bold uppercase text-zinc-800 mb-1">
             PIN / Passwort <span class="text-red-600" aria-hidden="true">*</span>
           </label>
           <input type="password"
@@ -1454,9 +1783,9 @@
                  required
                  autofocus
                  autocomplete="current-password"
-                 class="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-slate-900">
+                 class="w-full border border-zinc-300 px-3 py-2 text-zinc-900">
         </div>
-        <button type="submit" class="touch-btn w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl">
+        <button type="submit" class="touch-btn w-full bg-zinc-900 hover:bg-zinc-800 text-white font-bold py-2.5">
           Anmelden
         </button>
       </form>
