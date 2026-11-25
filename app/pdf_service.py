@@ -28,16 +28,20 @@ def format_dt_german(dt: datetime | None) -> str:
     return dt.strftime("%d.%m.%Y um %H:%M Uhr")
 
 
-def render_delivery_note_html(note: DeliveryNote) -> str:
+def render_delivery_note_html(note: DeliveryNote, cfg: dict[str, str] | None = None) -> str:
     template = jinja_env.get_template("delivery_note_pdf.html")
     total_qty = sum(item.quantity for item in note.items)
     school_address = note.school.address if note.school and note.school.address else ""
 
+    dept_name = (cfg or {}).get("department_name") or settings.DEPARTMENT_NAME
+    dept_sub = (cfg or {}).get("department_subtitle") or settings.DEPARTMENT_SUBTITLE
+    dept_contact = (cfg or {}).get("department_contact") or settings.DEPARTMENT_CONTACT
+
     return template.render(
         note=note,
-        department_name=settings.DEPARTMENT_NAME,
-        department_subtitle=settings.DEPARTMENT_SUBTITLE,
-        department_contact=settings.DEPARTMENT_CONTACT,
+        department_name=dept_name,
+        department_subtitle=dept_sub,
+        department_contact=dept_contact,
         school_address=school_address,
         total_quantity=total_qty,
         created_at_formatted=format_dt_german(note.created_at),
@@ -45,7 +49,7 @@ def render_delivery_note_html(note: DeliveryNote) -> str:
     )
 
 
-def _write_fallback_pdf(target_path: Path, note: DeliveryNote) -> None:
+def _write_fallback_pdf(target_path: Path, note: DeliveryNote, cfg: dict[str, str] | None = None) -> None:
     """
     Reiner Python-Fallback für minimale PDF-Erzeugung, falls lokal unter Windows
     ohne GTK/Pango-DLLs getestet wird. Im Docker-Container läuft immer WeasyPrint.
@@ -61,8 +65,10 @@ def _write_fallback_pdf(target_path: Path, note: DeliveryNote) -> None:
         text = text.encode("latin-1", "replace").decode("latin-1")
         return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
+    dept_name = (cfg or {}).get("department_name") or settings.DEPARTMENT_NAME
+
     lines = [
-        f"{settings.DEPARTMENT_NAME}",
+        f"{dept_name}",
         f"IT-LIEFERSCHEIN / UEBERGABEPROTOKOLL: {note.delivery_number}",
         f"Datum: {format_dt_german(note.completed_at)}",
         f"Schule: {note.school_name} ({note.recipient_email})",
@@ -115,7 +121,7 @@ def _write_fallback_pdf(target_path: Path, note: DeliveryNote) -> None:
     target_path.write_bytes(bytes(pdf_bytes))
 
 
-def generate_delivery_note_pdf(note: DeliveryNote) -> Path:
+def generate_delivery_note_pdf(note: DeliveryNote, cfg: dict[str, str] | None = None) -> Path:
     """
     Generiert das DIN-A4 Übergabeprotokoll als PDF mit WeasyPrint und speichert es
     dauerhaft im konfigurierten PDF_STORAGE_DIR.
@@ -125,7 +131,7 @@ def generate_delivery_note_pdf(note: DeliveryNote) -> Path:
     filename = f"Lieferschein_{safe_number}.pdf"
     target_path = settings.PDF_STORAGE_DIR / filename
 
-    html_content = render_delivery_note_html(note)
+    html_content = render_delivery_note_html(note, cfg=cfg)
 
     try:
         from weasyprint import HTML
@@ -137,6 +143,6 @@ def generate_delivery_note_pdf(note: DeliveryNote) -> Path:
             "WeasyPrint auf diesem Host nicht verfügbar (%s) – nutze integrierten PDF-Fallback.",
             exc,
         )
-        _write_fallback_pdf(target_path, note)
+        _write_fallback_pdf(target_path, note, cfg=cfg)
 
     return target_path

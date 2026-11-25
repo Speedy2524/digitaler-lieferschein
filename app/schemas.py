@@ -11,7 +11,6 @@ def clean_osticket_number(val: str | None) -> str | None:
     cleaned = val.strip()
     if not cleaned:
         return None
-    # Entferne typische Präfixe wie '#', 'Ticket', '[#...]', Leerzeichen und Bindestriche
     cleaned = re.sub(r"^[\[\s#]*(?:ticket\s*[:#-]?\s*)?", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"[\]\s#]+$", "", cleaned)
     cleaned = cleaned.replace(" ", "")
@@ -84,6 +83,99 @@ class StaffResponse(StaffBase):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# --- Lokale Benutzerverwaltung & Authentifizierung ---
+class InitialSetupRequest(BaseModel):
+    username: str = Field(..., min_length=2, max_length=100)
+    full_name: str = Field(..., min_length=2, max_length=150)
+    email: str | None = Field(default=None, max_length=255)
+    password: str = Field(..., min_length=4, max_length=200)
+    pin: str | None = Field(default=None, max_length=20)
+    add_to_staff_list: bool = True
+
+    @field_validator("username", "full_name")
+    @classmethod
+    def strip_user_fields(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Feld darf nicht leer sein.")
+        return v
+
+
+class LoginRequest(BaseModel):
+    username: str | None = None
+    pin_or_password: str = Field(..., min_length=1)
+
+
+class UserCreateRequest(BaseModel):
+    username: str = Field(..., min_length=2, max_length=100)
+    full_name: str = Field(..., min_length=2, max_length=150)
+    email: str | None = Field(default=None, max_length=255)
+    role: Literal["admin", "staff"] = "staff"
+    password: str = Field(..., min_length=4, max_length=200)
+    pin: str | None = Field(default=None, max_length=20)
+    active: bool = True
+    add_to_staff_list: bool = True
+
+    @field_validator("username", "full_name")
+    @classmethod
+    def strip_required_user(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Benutzername und Anzeigename sind Pflichtfelder.")
+        return v
+
+
+class UserUpdateRequest(BaseModel):
+    username: str = Field(..., min_length=2, max_length=100)
+    full_name: str = Field(..., min_length=2, max_length=150)
+    email: str | None = Field(default=None, max_length=255)
+    role: Literal["admin", "staff"] = "staff"
+    password: str | None = Field(default=None, max_length=200)
+    pin: str | None = Field(default=None, max_length=20)
+    clear_pin: bool = False
+    active: bool = True
+
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    full_name: str
+    email: str | None
+    role: str
+    has_pin: bool = False
+    active: bool
+    last_login_at: datetime | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# --- Systemeinstellungen (Konfigmenü) ---
+class SystemSettingsUpdateRequest(BaseModel):
+    app_title: str = Field(default="Digitaler IT-Lieferschein", min_length=2, max_length=150)
+    department_name: str = Field(default="Stadtverwaltung – Schul-IT", min_length=2, max_length=200)
+    department_subtitle: str = Field(default="", max_length=200)
+    department_contact: str = Field(default="", max_length=250)
+    auth_enabled: bool = True
+
+    smtp_enabled: bool = False
+    smtp_host: str = Field(default="", max_length=200)
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_security: Literal["starttls", "ssl", "none"] = "starttls"
+    smtp_username: str = Field(default="", max_length=200)
+    smtp_password: str | None = None  # Wenn None oder "__UNCHANGED__", bleibt das gespeicherte Passwort erhalten
+    smtp_from_email: str = Field(default="", max_length=200)
+    smtp_from_name: str = Field(default="Schul-IT Lieferschein-System", max_length=200)
+
+    osticket_enabled: bool = False
+    osticket_email: str = Field(default="", max_length=200)
+    global_archive_cc_email: str = Field(default="", max_length=200)
+
+
+class SmtpTestRequest(BaseModel):
+    recipient_email: str = Field(..., min_length=3, max_length=255)
 
 
 # --- Gerätepositionen ---
@@ -213,8 +305,3 @@ class DeliveryNoteResponse(BaseModel):
     total_quantity: int = 0
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class LoginRequest(BaseModel):
-    pin_or_password: str
-    username: str | None = None

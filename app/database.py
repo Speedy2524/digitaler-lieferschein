@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
-from app.models import Base, DeliveryItem, DeliveryNote, School, StaffMember
+from app.models import Base, DeliveryItem, DeliveryNote, School, StaffMember, SystemSetting
 
 connect_args = {"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(settings.DATABASE_URL, connect_args=connect_args)
@@ -24,6 +24,49 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+DEFAULT_SYSTEM_SETTINGS: dict[str, str] = {
+    "app_title": settings.APP_TITLE,
+    "department_name": settings.DEPARTMENT_NAME,
+    "department_subtitle": settings.DEPARTMENT_SUBTITLE,
+    "department_contact": settings.DEPARTMENT_CONTACT,
+    "auth_enabled": "true" if settings.AUTH_ENABLED else "true",
+    "smtp_enabled": "true" if settings.SMTP_ENABLED else "false",
+    "smtp_host": "" if settings.SMTP_HOST == "mail.kommune.local" else settings.SMTP_HOST,
+    "smtp_port": str(settings.SMTP_PORT),
+    "smtp_security": settings.SMTP_SECURITY,
+    "smtp_username": settings.SMTP_USERNAME,
+    "smtp_password": settings.SMTP_PASSWORD,
+    "smtp_from_email": "" if settings.SMTP_FROM_EMAIL == "schul-it@kommune.local" else settings.SMTP_FROM_EMAIL,
+    "smtp_from_name": settings.SMTP_FROM_NAME,
+    "osticket_enabled": "true" if bool(settings.OSTICKET_EMAIL) else "false",
+    "osticket_email": settings.OSTICKET_EMAIL,
+    "global_archive_cc_email": settings.GLOBAL_ARCHIVE_CC_EMAIL,
+}
+
+
+def get_runtime_settings(db: Session) -> dict[str, str]:
+    """Liest alle Systemeinstellungen aus der DB (mit Fallback auf DEFAULT_SYSTEM_SETTINGS)."""
+    result = dict(DEFAULT_SYSTEM_SETTINGS)
+    rows = db.query(SystemSetting).all()
+    for row in rows:
+        result[row.key] = row.value
+    return result
+
+
+def set_runtime_settings(db: Session, updates: dict[str, str]) -> dict[str, str]:
+    """Speichert geänderte Systemeinstellungen persistent in der SQLite-DB."""
+    for key, val in updates.items():
+        if key not in DEFAULT_SYSTEM_SETTINGS:
+            continue
+        existing = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+        if existing:
+            existing.value = str(val)
+        else:
+            db.add(SystemSetting(key=key, value=str(val)))
+    db.commit()
+    return get_runtime_settings(db)
 
 
 def generate_next_delivery_number(db: Session, year: int | None = None) -> str:
@@ -53,6 +96,14 @@ def init_db_and_seed() -> None:
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
+        # 1. Initiale System-Settings in DB anlegen, falls noch nicht vorhanden
+        existing_keys = {row.key for row in db.query(SystemSetting).all()}
+        for k, v in DEFAULT_SYSTEM_SETTINGS.items():
+            if k not in existing_keys:
+                db.add(SystemSetting(key=k, value=v))
+        db.flush()
+
+        # 2. Beispielschulen & Mitarbeiter
         school_count = db.query(School).count()
         staff_count = db.query(StaffMember).count()
 

@@ -152,7 +152,7 @@ def test_smtp_fault_tolerance_and_resend(monkeypatch):
 
     monkeypatch.setattr(settings, "SMTP_ENABLED", True)
 
-    def _fail_smtp(msg):
+    def _fail_smtp(msg, cfg=None):
         raise ConnectionRefusedError("Exchange-Relay 10.0.0.25:587 nicht erreichbar")
 
     monkeypatch.setattr(email_srv, "_send_raw_email", _fail_smtp)
@@ -180,10 +180,90 @@ def test_smtp_fault_tolerance_and_resend(monkeypatch):
         assert data["email_osticket_status"] == "FEHLER"
 
         # Nun SMTP wieder funktionsfähig machen und erneut senden
-        monkeypatch.setattr(email_srv, "_send_raw_email", lambda msg: None)
+        monkeypatch.setattr(email_srv, "_send_raw_email", lambda msg, cfg=None: None)
         r_resend = client.post(f"/api/delivery-notes/{target_id}/resend-email")
         assert r_resend.status_code == 200
         resent = r_resend.json()
         assert resent["email_school_status"] == "VERSENDET"
         assert resent["email_osticket_status"] == "VERSENDET"
+
+
+def test_setup_user_management_and_settings_menu():
+    """Prüft Ersteinrichtung, Login (Passwort & Schnell-PIN), Benutzerverwaltung und Konfigmenü."""
+    with TestClient(app) as client:
+        # 1. Vor dem Setup steht needs_setup auf True
+        st = client.get("/api/auth/status").json()
+        assert st["needs_setup"] is True
+
+        # 2. Ersteinrichtung (Initiales Admin-Konto anlegen)
+        r_setup = client.post(
+            "/api/auth/setup",
+            json={
+                "username": "admin",
+                "full_name": "Julian Admin",
+                "email": "admin@kommune.local",
+                "password": "secretPassword123",
+                "pin": "9876",
+                "add_to_staff_list": True,
+            },
+        )
+        assert r_setup.status_code == 200, r_setup.text
+        setup_data = r_setup.json()
+        token = setup_data["token"]
+        headers = {"X-Auth-Token": token}
+
+        # 3. Konfigmenü (/api/settings) abrufen und ändern
+        r_get_cfg = client.get("/api/settings", headers=headers)
+        assert r_get_cfg.status_code == 200
+
+        r_put_cfg = client.put(
+            "/api/settings",
+            headers=headers,
+            json={
+                "app_title": "Schul-IT Lieferschein",
+                "department_name": "Stadtverwaltung – Schul-IT",
+                "department_subtitle": "Amt für Bildung und Sport",
+                "department_contact": "schul-it@kommune.local",
+                "auth_enabled": True,
+                "smtp_enabled": False,
+                "smtp_host": "mail.schulen.local",
+                "smtp_port": 587,
+                "smtp_security": "starttls",
+                "smtp_username": "",
+                "smtp_password": "__UNCHANGED__",
+                "smtp_from_email": "lieferschein@schulen.local",
+                "smtp_from_name": "Schul-IT",
+                "osticket_enabled": True,
+                "osticket_email": "tickets@schulen.local",
+                "global_archive_cc_email": "",
+            },
+        )
+        assert r_put_cfg.status_code == 200
+        assert r_put_cfg.json()["osticket_email"] == "tickets@schulen.local"
+
+        # 4. Neuen Mitarbeiter-Benutzer in der lokalen Benutzerverwaltung anlegen
+        r_new_user = client.post(
+            "/api/users",
+            headers=headers,
+            json={
+                "username": "azubi1",
+                "full_name": "Tim Azubi",
+                "email": "tim@kommune.local",
+                "role": "staff",
+                "password": "azubiPass",
+                "pin": "4321",
+                "active": True,
+                "add_to_staff_list": True,
+            },
+        )
+        assert r_new_user.status_code == 201, r_new_user.text
+
+        # 5. Schnell-PIN-Login für den neuen Benutzer testen
+        r_pin_login = client.post(
+            "/api/auth/login",
+            json={"username": None, "pin_or_password": "4321"},
+        )
+        assert r_pin_login.status_code == 200
+        assert r_pin_login.json()["user"]["username"] == "azubi1"
+
 

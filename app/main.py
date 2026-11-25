@@ -1,8 +1,9 @@
 import base64
 import hashlib
 import hmac
+import secrets
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
@@ -12,21 +13,33 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
-from app.database import generate_next_delivery_number, get_db, init_db_and_seed
-from app.email_service import dispatch_delivery_note_emails
-from app.models import DeliveryItem, DeliveryNote, School, StaffMember
+from app.database import (
+    generate_next_delivery_number,
+    get_db,
+    get_runtime_settings,
+    init_db_and_seed,
+    set_runtime_settings,
+)
+from app.email_service import dispatch_delivery_note_emails, send_test_email
+from app.models import DeliveryItem, DeliveryNote, School, StaffMember, User, UserSession
 from app.pdf_service import generate_delivery_note_pdf, render_delivery_note_html
 from app.schemas import (
     DeliveryNoteCompleteRequest,
     DeliveryNoteResponse,
     DeliveryNoteSaveRequest,
+    InitialSetupRequest,
     LoginRequest,
     SchoolCreate,
     SchoolResponse,
     SchoolUpdate,
+    SmtpTestRequest,
     StaffCreate,
     StaffResponse,
     StaffUpdate,
+    SystemSettingsUpdateRequest,
+    UserCreateRequest,
+    UserResponse,
+    UserUpdateRequest,
 )
 
 
@@ -39,7 +52,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_TITLE,
     description="Selbstgehostete Webanwendung für digitale IT-Lieferscheine (Schul-IT)",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -49,59 +62,143 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 # ==============================================================================
-# Zugriffsschutz / Authentifizierung (Optional via .env)
+# Passwort-/PIN-Hashing (PBKDF2-HMAC-SHA256) & Session-Management
 # ==============================================================================
 
-def _compute_auth_token() -> str:
+def hash_secret(secret: str) -> str:
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", secret.encode("utf-8"), salt.encode("utf-8"), 120_000)
+    return f"pbkdf2_sha256${salt}${dk.hex()}"
+
+
+def verify_secret(secret: str, stored_hash: str | None) -> bool:
+    if not stored_hash or not secret:
+        return False
+    try:
+        algo, salt, hex_digest = stored_hash.split("$", 2)
+        if algo != "pbkdf2_sha256":
+            return False
+        dk = hashlib.pbkdf2_hmac("sha256", secret.encode("utf-8"), salt.encode("utf-8"), 120_000)
+        return hmac.compare_digest(dk.hex(), hex_digest)
+    except Exception:
+        return False
+
+
+def _compute_legacy_env_token() -> str:
     secret = f"{settings.AUTH_USERNAME}:{settings.AUTH_PASSWORD}:{settings.AUTH_PIN}"
     return hashlib.sha256(secret.encode("utf-8")).hexdigest()
 
 
-def _verify_credentials(secret_input: str, username_input: str | None = None) -> bool:
-    secret_input = secret_input.strip()
-    if settings.AUTH_PIN and hmac.compare_digest(secret_input, settings.AUTH_PIN):
-        return True
-    if settings.AUTH_PASSWORD and hmac.compare_digest(secret_input, settings.AUTH_PASSWORD):
-        if not username_input or hmac.compare_digest(username_input.strip(), settings.AUTH_USERNAME):
-            return True
-    return False
+def _create_user_session(db: Session, user: User) -> str:
+    token = secrets.token_urlsafe(48)
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(days=14)
+    user.last_login_at = now
+    db.add(UserSession(token=token, user_id=user.id, created_at=now, expires_at=expires))
+    db.commit()
+    return token
 
 
-def _is_request_authenticated(request: Request) -> bool:
-    if not settings.AUTH_ENABLED:
-        return True
+def _serialize_user(user: User) -> UserResponse:
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        full_name=user.full_name,
+        email=user.email,
+        role=user.role,
+        has_pin=bool(user.pin_hash),
+        active=user.active,
+        last_login_at=user.last_login_at,
+        created_at=user.created_at,
+    )
 
-    expected_token = _compute_auth_token()
 
-    # 1. Token aus Header oder Cookie prüfen
-    header_token = request.headers.get("X-Auth-Token", "")
-    cookie_token = request.cookies.get("it_ls_token", "")
-    if header_token and hmac.compare_digest(header_token, expected_token):
-        return True
-    if cookie_token and hmac.compare_digest(cookie_token, expected_token):
-        return True
+def _get_current_user_optional(request: Request, db: Session) -> User | None:
+    token = request.headers.get("X-Auth-Token", "") or request.cookies.get("it_ls_token", "")
+    now = datetime.now(timezone.utc)
 
-    # 2. HTTP Basic Auth prüfen
+    if token:
+        session_row = (
+            db.query(UserSession)
+            .options(joinedload(UserSession.user))
+            .filter(UserSession.token == token)
+            .first()
+        )
+        if session_row and session_row.user and session_row.user.active:
+            exp = session_row.expires_at
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if exp > now:
+                return session_row.user
+
+    # HTTP Basic Auth prüfen
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Basic "):
         try:
             decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
             username, password = decoded.split(":", 1)
-            if _verify_credentials(password, username):
-                return True
+            user = (
+                db.query(User)
+                .filter(User.username.ilike(username.strip()), User.active.is_(True))
+                .first()
+            )
+            if user and (verify_secret(password, user.password_hash) or verify_secret(password, user.pin_hash)):
+                return user
         except Exception:
             pass
 
-    return False
+    return None
 
 
-def require_auth(request: Request) -> None:
-    if not _is_request_authenticated(request):
+def _is_auth_enforced(db: Session) -> bool:
+    """
+    Prüft, ob die Anmeldung aktuell erzwungen wird:
+    - Sobald mindestens ein lokaler Benutzer in der DB existiert UND auth_enabled in den Settings aktiv ist -> True
+    - Oder wenn AUTH_ENABLED=true explizit in der .env gesetzt ist -> True
+    """
+    if settings.AUTH_ENABLED:
+        return True
+    user_count = db.query(User).count()
+    if user_count == 0:
+        return False
+    cfg = get_runtime_settings(db)
+    return cfg.get("auth_enabled", "true").lower() == "true"
+
+
+def require_auth(request: Request, db: Session = Depends(get_db)) -> User | None:
+    user = _get_current_user_optional(request, db)
+    if user is not None:
+        return user
+
+    if not _is_auth_enforced(db):
+        return None
+
+    # Fallback auf .env-Token falls noch gar keine DB-User existieren
+    if db.query(User).count() == 0:
+        expected = _compute_legacy_env_token()
+        token = request.headers.get("X-Auth-Token", "") or request.cookies.get("it_ls_token", "")
+        if token and hmac.compare_digest(token, expected):
+            return None
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentifizierung erforderlich. Bitte melden Sie sich an.",
+    )
+
+
+def require_admin(request: Request, db: Session = Depends(get_db)) -> User | None:
+    user = require_auth(request, db)
+    if user is not None and user.role != "admin":
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentifizierung erforderlich. Bitte PIN oder Zugangsdaten eingeben.",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Diese Aktion erfordert Administrator-Berechtigungen.",
         )
+    return user
 
+
+# ==============================================================================
+# Health, Auth-Status, Ersteinrichtung (Setup) & Login/Logout
+# ==============================================================================
 
 @app.get("/api/health")
 def health_check():
@@ -109,45 +206,334 @@ def health_check():
 
 
 @app.get("/api/auth/status")
-def auth_status(request: Request):
+def auth_status(request: Request, db: Session = Depends(get_db)):
+    cfg = get_runtime_settings(db)
+    user_count = db.query(User).count()
+    needs_setup = user_count == 0
+    auth_enabled = cfg.get("auth_enabled", "true").lower() == "true" or settings.AUTH_ENABLED
+    current_user = _get_current_user_optional(request, db)
+
+    is_authenticated = current_user is not None or (not auth_enabled and not needs_setup)
+
+    smtp_host = (cfg.get("smtp_host") or "").strip()
+    smtp_enabled = (
+        cfg.get("smtp_enabled", "false").lower() == "true"
+        and bool(smtp_host)
+        and smtp_host != "mail.kommune.local"
+    )
+    osticket_email = (cfg.get("osticket_email") or "").strip()
+    osticket_enabled = (
+        cfg.get("osticket_enabled", "false").lower() == "true"
+        and bool(osticket_email)
+        and osticket_email != "tickets@kommune.local"
+    )
+
     return {
-        "auth_enabled": settings.AUTH_ENABLED,
-        "authenticated": _is_request_authenticated(request),
-        "app_title": settings.APP_TITLE,
-        "department_name": settings.DEPARTMENT_NAME,
-        "department_subtitle": settings.DEPARTMENT_SUBTITLE,
-        "smtp_enabled": settings.SMTP_ENABLED,
-        "osticket_configured": bool(settings.OSTICKET_EMAIL),
-        "osticket_email": settings.OSTICKET_EMAIL,
+        "needs_setup": needs_setup,
+        "auth_enabled": auth_enabled,
+        "authenticated": is_authenticated,
+        "current_user": _serialize_user(current_user).model_dump() if current_user else None,
+        "app_title": cfg.get("app_title") or settings.APP_TITLE,
+        "department_name": cfg.get("department_name") or settings.DEPARTMENT_NAME,
+        "department_subtitle": cfg.get("department_subtitle") or settings.DEPARTMENT_SUBTITLE,
+        "department_contact": cfg.get("department_contact") or settings.DEPARTMENT_CONTACT,
+        "smtp_enabled": smtp_enabled,
+        "smtp_host": smtp_host,
+        "osticket_configured": osticket_enabled,
+        "osticket_email": osticket_email if osticket_enabled else "",
     }
 
 
-@app.post("/api/auth/login")
-def login(payload: LoginRequest, response: Response):
-    if not settings.AUTH_ENABLED:
-        return {"authenticated": True, "token": "auth-disabled"}
-
-    if not _verify_credentials(payload.pin_or_password, payload.username):
+@app.post("/api/auth/setup")
+def initial_setup(payload: InitialSetupRequest, response: Response, db: Session = Depends(get_db)):
+    """Ersteinrichtung: Legt das erste Administrator-Konto an, falls noch kein Benutzer existiert."""
+    if db.query(User).count() > 0:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Ungültige PIN oder falsches Passwort.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Die Ersteinrichtung wurde bereits abgeschlossen. Bitte melden Sie sich an.",
         )
 
-    token = _compute_auth_token()
+    pin_clean = payload.pin.strip() if payload.pin and payload.pin.strip() else None
+    admin_user = User(
+        username=payload.username.strip(),
+        full_name=payload.full_name.strip(),
+        email=payload.email.strip() if payload.email else None,
+        role="admin",
+        password_hash=hash_secret(payload.password),
+        pin_hash=hash_secret(pin_clean) if pin_clean else None,
+        active=True,
+    )
+    db.add(admin_user)
+    db.flush()
+
+    if payload.add_to_staff_list:
+        existing_staff = db.query(StaffMember).filter(StaffMember.name == admin_user.full_name).first()
+        if not existing_staff:
+            db.add(
+                StaffMember(
+                    name=admin_user.full_name,
+                    role="Schul-IT Administration",
+                    email=admin_user.email,
+                    active=True,
+                )
+            )
+
+    set_runtime_settings(db, {"auth_enabled": "true"})
+    token = _create_user_session(db, admin_user)
+
     response.set_cookie(
         key="it_ls_token",
         value=token,
         httponly=True,
         samesite="lax",
-        max_age=60 * 60 * 24 * 14,  # 14 Tage
+        max_age=60 * 60 * 24 * 14,
     )
-    return {"authenticated": True, "token": token}
+    return {
+        "authenticated": True,
+        "token": token,
+        "user": _serialize_user(admin_user),
+    }
+
+
+@app.post("/api/auth/login")
+def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
+    secret_in = payload.pin_or_password.strip()
+    username_in = payload.username.strip() if payload.username else ""
+
+    matched_user: User | None = None
+    active_users = db.query(User).filter(User.active.is_(True)).all()
+
+    if username_in:
+        for u in active_users:
+            if u.username.lower() == username_in.lower():
+                if verify_secret(secret_in, u.password_hash) or verify_secret(secret_in, u.pin_hash):
+                    matched_user = u
+                break
+    else:
+        # Schnell-PIN-Login (oder Passwort falls eindeutig) ohne Benutzernamen
+        for u in active_users:
+            if verify_secret(secret_in, u.pin_hash) or verify_secret(secret_in, u.password_hash):
+                matched_user = u
+                break
+
+    if not matched_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Ungültiger Benutzername, falsches Passwort oder ungültige Schnell-PIN.",
+        )
+
+    token = _create_user_session(db, matched_user)
+    response.set_cookie(
+        key="it_ls_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 14,
+    )
+    return {
+        "authenticated": True,
+        "token": token,
+        "user": _serialize_user(matched_user),
+    }
 
 
 @app.post("/api/auth/logout")
-def logout(response: Response):
+def logout(request: Request, response: Response, db: Session = Depends(get_db)):
+    token = request.headers.get("X-Auth-Token", "") or request.cookies.get("it_ls_token", "")
+    if token:
+        db.query(UserSession).filter(UserSession.token == token).delete()
+        db.commit()
     response.delete_cookie("it_ls_token")
     return {"authenticated": False}
+
+
+# ==============================================================================
+# Lokale Benutzerverwaltung (/api/users)
+# ==============================================================================
+
+@app.get("/api/users", response_model=list[UserResponse], dependencies=[Depends(require_admin)])
+def list_users(db: Session = Depends(get_db)):
+    users = db.query(User).order_by(User.username.asc()).all()
+    return [_serialize_user(u) for u in users]
+
+
+@app.post(
+    "/api/users",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
+def create_user(payload: UserCreateRequest, db: Session = Depends(get_db)):
+    existing = db.query(User).filter(User.username.ilike(payload.username.strip())).first()
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ein Benutzer mit dem Benutzernamen '{payload.username}' existiert bereits.",
+        )
+
+    pin_clean = payload.pin.strip() if payload.pin and payload.pin.strip() else None
+    new_user = User(
+        username=payload.username.strip(),
+        full_name=payload.full_name.strip(),
+        email=payload.email.strip() if payload.email else None,
+        role=payload.role,
+        password_hash=hash_secret(payload.password),
+        pin_hash=hash_secret(pin_clean) if pin_clean else None,
+        active=payload.active,
+    )
+    db.add(new_user)
+    db.flush()
+
+    if payload.add_to_staff_list:
+        existing_staff = db.query(StaffMember).filter(StaffMember.name == new_user.full_name).first()
+        if not existing_staff:
+            role_label = "Schul-IT Administration" if new_user.role == "admin" else "Schul-IT Mitarbeiter / Azubi"
+            db.add(
+                StaffMember(
+                    name=new_user.full_name,
+                    role=role_label,
+                    email=new_user.email,
+                    active=True,
+                )
+            )
+
+    db.commit()
+    db.refresh(new_user)
+    return _serialize_user(new_user)
+
+
+@app.put("/api/users/{user_id}", response_model=UserResponse, dependencies=[Depends(require_admin)])
+def update_user(
+    user_id: int,
+    payload: UserUpdateRequest,
+    current_user: User | None = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Benutzer nicht gefunden.")
+
+    dup = (
+        db.query(User)
+        .filter(User.username.ilike(payload.username.strip()), User.id != user_id)
+        .first()
+    )
+    if dup:
+        raise HTTPException(status_code=400, detail="Dieser Benutzername ist bereits vergeben.")
+
+    if current_user and current_user.id == user.id and not payload.active:
+        raise HTTPException(status_code=400, detail="Sie können Ihr eigenes Konto nicht deaktivieren.")
+
+    user.username = payload.username.strip()
+    user.full_name = payload.full_name.strip()
+    user.email = payload.email.strip() if payload.email else None
+    user.role = payload.role
+    user.active = payload.active
+
+    if payload.password and payload.password.strip():
+        user.password_hash = hash_secret(payload.password.strip())
+
+    if payload.clear_pin:
+        user.pin_hash = None
+    elif payload.pin and payload.pin.strip():
+        user.pin_hash = hash_secret(payload.pin.strip())
+
+    db.commit()
+    db.refresh(user)
+    return _serialize_user(user)
+
+
+@app.delete("/api/users/{user_id}", dependencies=[Depends(require_admin)])
+def delete_user(
+    user_id: int,
+    current_user: User | None = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Benutzer nicht gefunden.")
+    if current_user and current_user.id == user.id:
+        raise HTTPException(status_code=400, detail="Sie können Ihr eigenes Benutzerkonto nicht löschen.")
+
+    admin_count = db.query(User).filter(User.role == "admin", User.active.is_(True)).count()
+    if user.role == "admin" and admin_count <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Der letzte aktive Administrator kann nicht gelöscht werden.",
+        )
+
+    db.delete(user)
+    db.commit()
+    return {"deleted": True, "id": user_id}
+
+
+# ==============================================================================
+# Systemeinstellungen / Konfigmenü (/api/settings)
+# ==============================================================================
+
+@app.get("/api/settings", dependencies=[Depends(require_admin)])
+def get_system_settings(db: Session = Depends(get_db)):
+    cfg = get_runtime_settings(db)
+    has_pw = bool(cfg.get("smtp_password"))
+    return {
+        "app_title": cfg.get("app_title", settings.APP_TITLE),
+        "department_name": cfg.get("department_name", settings.DEPARTMENT_NAME),
+        "department_subtitle": cfg.get("department_subtitle", settings.DEPARTMENT_SUBTITLE),
+        "department_contact": cfg.get("department_contact", settings.DEPARTMENT_CONTACT),
+        "auth_enabled": cfg.get("auth_enabled", "true").lower() == "true",
+        "smtp_enabled": cfg.get("smtp_enabled", "false").lower() == "true",
+        "smtp_host": cfg.get("smtp_host", ""),
+        "smtp_port": int(cfg.get("smtp_port") or 587),
+        "smtp_security": cfg.get("smtp_security", "starttls"),
+        "smtp_username": cfg.get("smtp_username", ""),
+        "smtp_password_set": has_pw,
+        "smtp_from_email": cfg.get("smtp_from_email", ""),
+        "smtp_from_name": cfg.get("smtp_from_name", "Schul-IT Lieferschein-System"),
+        "osticket_enabled": cfg.get("osticket_enabled", "false").lower() == "true",
+        "osticket_email": cfg.get("osticket_email", ""),
+        "global_archive_cc_email": cfg.get("global_archive_cc_email", ""),
+    }
+
+
+@app.put("/api/settings", dependencies=[Depends(require_admin)])
+def update_system_settings(payload: SystemSettingsUpdateRequest, db: Session = Depends(get_db)):
+    current = get_runtime_settings(db)
+    updates = {
+        "app_title": payload.app_title.strip(),
+        "department_name": payload.department_name.strip(),
+        "department_subtitle": payload.department_subtitle.strip(),
+        "department_contact": payload.department_contact.strip(),
+        "auth_enabled": "true" if payload.auth_enabled else "false",
+        "smtp_enabled": "true" if payload.smtp_enabled else "false",
+        "smtp_host": payload.smtp_host.strip(),
+        "smtp_port": str(payload.smtp_port),
+        "smtp_security": payload.smtp_security,
+        "smtp_username": payload.smtp_username.strip(),
+        "smtp_from_email": payload.smtp_from_email.strip(),
+        "smtp_from_name": payload.smtp_from_name.strip(),
+        "osticket_enabled": "true" if payload.osticket_enabled else "false",
+        "osticket_email": payload.osticket_email.strip(),
+        "global_archive_cc_email": payload.global_archive_cc_email.strip(),
+    }
+    if payload.smtp_password is not None and payload.smtp_password != "__UNCHANGED__":
+        updates["smtp_password"] = payload.smtp_password
+    else:
+        updates["smtp_password"] = current.get("smtp_password", "")
+
+    set_runtime_settings(db, updates)
+    return get_system_settings(db)
+
+
+@app.post("/api/settings/test-smtp", dependencies=[Depends(require_admin)])
+def test_smtp_connection(payload: SmtpTestRequest, db: Session = Depends(get_db)):
+    cfg = get_runtime_settings(db)
+    try:
+        return send_test_email(payload.recipient_email, cfg=cfg)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"SMTP-Test fehlgeschlagen: {exc}",
+        )
 
 
 # ==============================================================================
@@ -480,7 +866,6 @@ def update_delivery_note(note_id: int, payload: DeliveryNoteSaveRequest, db: Ses
     note.notes = payload.notes.strip() if payload.notes else None
     note.email_osticket_status = "AUSSTEHEND" if payload.osticket_number else "KEIN_TICKET"
 
-    # Alte Positionen ersetzen
     db.query(DeliveryItem).filter(DeliveryItem.delivery_note_id == note.id).delete()
     db.flush()
 
@@ -557,12 +942,14 @@ def complete_delivery_note(
     note.status = "ABGESCHLOSSEN"
     note.completed_at = datetime.now(timezone.utc)
 
+    cfg = get_runtime_settings(db)
+
     # 1. PDF generieren und dauerhaft speichern
-    pdf_path = generate_delivery_note_pdf(note)
+    pdf_path = generate_delivery_note_pdf(note, cfg=cfg)
     note.pdf_filename = pdf_path.name
 
     # 2. E-Mails (Schule + optional osTicket) fehlertolerant versenden
-    dispatch_delivery_note_emails(note, pdf_path)
+    dispatch_delivery_note_emails(note, pdf_path, cfg=cfg)
 
     db.commit()
     db.refresh(note)
@@ -589,12 +976,13 @@ def resend_delivery_note_email(note_id: int, db: Session = Depends(get_db)):
             detail="E-Mails können nur für abgeschlossene Lieferscheine versendet werden.",
         )
 
+    cfg = get_runtime_settings(db)
     pdf_path = settings.PDF_STORAGE_DIR / (note.pdf_filename or f"Lieferschein_{note.delivery_number}.pdf")
     if not pdf_path.exists():
-        pdf_path = generate_delivery_note_pdf(note)
+        pdf_path = generate_delivery_note_pdf(note, cfg=cfg)
         note.pdf_filename = pdf_path.name
 
-    dispatch_delivery_note_emails(note, pdf_path)
+    dispatch_delivery_note_emails(note, pdf_path, cfg=cfg)
     db.commit()
     db.refresh(note)
     return _serialize_note(note)
@@ -615,13 +1003,14 @@ def get_delivery_note_pdf(
     if not note:
         raise HTTPException(status_code=404, detail="Lieferschein nicht gefunden.")
 
+    cfg = get_runtime_settings(db)
     if note.pdf_filename:
         pdf_path = settings.PDF_STORAGE_DIR / note.pdf_filename
     else:
         pdf_path = settings.PDF_STORAGE_DIR / f"Lieferschein_{note.delivery_number}.pdf"
 
     if not pdf_path.exists():
-        pdf_path = generate_delivery_note_pdf(note)
+        pdf_path = generate_delivery_note_pdf(note, cfg=cfg)
         if note.status == "ABGESCHLOSSEN":
             note.pdf_filename = pdf_path.name
             db.commit()
@@ -645,7 +1034,8 @@ def preview_delivery_note_html(note_id: int, db: Session = Depends(get_db)):
     )
     if not note:
         raise HTTPException(status_code=404, detail="Lieferschein nicht gefunden.")
-    return HTMLResponse(content=render_delivery_note_html(note))
+    cfg = get_runtime_settings(db)
+    return HTMLResponse(content=render_delivery_note_html(note, cfg=cfg))
 
 
 @app.get("/", response_class=HTMLResponse)

@@ -25,10 +25,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function deliveryApp() {
   return {
-    // Design-Theme: 'erp' (ERP / Logistik-Split) | 'business' (Business Clean) | 'gmuend' (Kommunal / Gmünd CD) | 'standard' (Karten-Ansicht)
+    // Design-Theme: 'erp' | 'business' | 'gmuend' | 'standard'
     uiTheme: localStorage.getItem("it_ls_ui_theme") || "erp",
 
-    // Navigation: 'deliveries' | 'prepare' | 'handover' | 'archive' | 'admin'
+    // Navigation: 'deliveries' | 'prepare' | 'handover' | 'archive' | 'admin' | 'settings'
     activeTab: "deliveries",
     isLoading: false,
     isSubmitting: false,
@@ -37,14 +37,36 @@ function deliveryApp() {
     selectedSplitNote: null,
 
     // App- & Auth-Status
-    authEnabled: false,
-    authenticated: true,
+    needsSetup: false,
+    authEnabled: true,
+    authenticated: false,
+    currentUser: null,
     authToken: localStorage.getItem("it_ls_token") || "",
+
+    // Login-Modus: 'password' (Benutzername + Passwort) | 'pin' (Schnell-PIN)
+    loginMode: "password",
+    loginUsername: "",
     loginPin: "",
     loginError: "",
+
+    // Ersteinrichtungs-Formular (Initiales Admin-Konto)
+    setupError: "",
+    setupForm: {
+      username: "admin",
+      full_name: "",
+      email: "",
+      password: "",
+      pin: "",
+      add_to_staff_list: true,
+    },
+
+    // System-Metadaten (Header & Sidebar)
     appTitle: "Digitaler IT-Lieferschein",
     departmentName: "Stadtverwaltung – Schul-IT",
+    departmentSubtitle: "",
+    departmentContact: "",
     smtpEnabled: false,
+    smtpHost: "",
     osticketConfigured: false,
     osticketEmail: "",
 
@@ -68,9 +90,48 @@ function deliveryApp() {
     schools: [],
     staffList: [],
 
+    // Lokale Benutzerverwaltung
+    usersList: [],
+    userFormError: "",
+    userForm: {
+      id: null,
+      username: "",
+      full_name: "",
+      email: "",
+      role: "staff",
+      password: "",
+      pin: "",
+      clear_pin: false,
+      active: true,
+      add_to_staff_list: true,
+    },
+
+    // Konfigmenü (Systemeinstellungen in DB)
+    settingsForm: {
+      app_title: "Digitaler IT-Lieferschein",
+      department_name: "Stadtverwaltung – Schul-IT / Amt für Bildung und Sport",
+      department_subtitle: "Kommunale IT-Betreuung der Schulen",
+      department_contact: "",
+      auth_enabled: true,
+      smtp_enabled: false,
+      smtp_host: "",
+      smtp_port: 587,
+      smtp_security: "starttls",
+      smtp_username: "",
+      smtp_password: "",
+      smtp_password_set: false,
+      smtp_from_email: "",
+      smtp_from_name: "Schul-IT Lieferschein-System",
+      osticket_enabled: false,
+      osticket_email: "",
+      global_archive_cc_email: "",
+    },
+    testEmailRecipient: "",
+    isTestingSmtp: false,
+
     // Lieferschein-Listen
     openNotes: [], // Status BEREIT
-    draftAndReadyNotes: [], // Status ENTWURF + BEREIT (für Vorbereitungs-Übersicht)
+    draftAndReadyNotes: [], // Status ENTWURF + BEREIT
     archivedNotes: [], // Status ABGESCHLOSSEN
 
     // Suchbegriffe
@@ -145,7 +206,7 @@ function deliveryApp() {
     async init() {
       this.applyTheme(this.uiTheme);
       await this.checkAuthStatus();
-      if (this.authenticated) {
+      if (this.authenticated && !this.needsSetup) {
         await this.loadInitialData();
       }
     },
@@ -178,11 +239,8 @@ function deliveryApp() {
       const response = await fetch(url, { ...options, headers });
       if (response.status === 401) {
         this.authenticated = false;
-        const loginDlg = document.getElementById("login-dialog");
-        if (loginDlg && !loginDlg.open) {
-          loginDlg.showModal();
-        }
-        throw new Error("Bitte melden Sie sich mit Ihrer PIN an.");
+        this.currentUser = null;
+        throw new Error("Sitzung abgelaufen oder Anmeldung erforderlich.");
       }
       const contentType = response.headers.get("content-type") || "";
       let data = null;
@@ -211,32 +269,86 @@ function deliveryApp() {
           headers: this.authToken ? { "X-Auth-Token": this.authToken } : {},
         });
         const data = await res.json();
-        this.authEnabled = data.auth_enabled;
-        this.authenticated = data.authenticated;
+        this.needsSetup = Boolean(data.needs_setup);
+        this.authEnabled = Boolean(data.auth_enabled);
+        this.authenticated = Boolean(data.authenticated);
+        this.currentUser = data.current_user || null;
+
         this.appTitle = data.app_title || this.appTitle;
         this.departmentName = data.department_name || this.departmentName;
-        this.smtpEnabled = data.smtp_enabled;
-        this.osticketConfigured = data.osticket_configured;
+        this.departmentSubtitle = data.department_subtitle || "";
+        this.departmentContact = data.department_contact || "";
+        this.smtpEnabled = Boolean(data.smtp_enabled);
+        this.smtpHost = data.smtp_host || "";
+        this.osticketConfigured = Boolean(data.osticket_configured);
         this.osticketEmail = data.osticket_email || "";
-
-        if (this.authEnabled && !this.authenticated) {
-          const loginDlg = document.getElementById("login-dialog");
-          if (loginDlg && !loginDlg.open) {
-            loginDlg.showModal();
-          }
-        }
       } catch (err) {
         console.error("Auth-Status konnte nicht geprüft werden:", err);
       }
     },
 
+    async submitInitialSetup() {
+      this.setupError = "";
+      if (!this.setupForm.username.trim() || !this.setupForm.full_name.trim()) {
+        this.setupError = "Bitte Benutzername und vollständigen Namen eingeben.";
+        return;
+      }
+      if (!this.setupForm.password || this.setupForm.password.length < 4) {
+        this.setupError = "Das Passwort muss mindestens 4 Zeichen lang sein.";
+        return;
+      }
+      this.isSubmitting = true;
+      try {
+        const res = await fetch("/api/auth/setup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(this.setupForm),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          this.setupError = data.detail || "Ersteinrichtung fehlgeschlagen.";
+          return;
+        }
+        this.authToken = data.token;
+        localStorage.setItem("it_ls_token", data.token);
+        this.currentUser = data.user;
+        this.needsSetup = false;
+        this.authenticated = true;
+        this.showToast(
+          "Ersteinrichtung abgeschlossen",
+          `Willkommen, ${data.user.full_name}!`,
+          "success"
+        );
+        await this.checkAuthStatus();
+        await this.loadInitialData();
+      } catch (err) {
+        this.setupError = err.message || "Verbindungsfehler.";
+      } finally {
+        this.isSubmitting = false;
+      }
+    },
+
     async submitLogin() {
       this.loginError = "";
+      const payload = {
+        username: this.loginMode === "password" ? this.loginUsername.trim() : null,
+        pin_or_password: this.loginPin,
+      };
+      if (this.loginMode === "password" && !payload.username) {
+        this.loginError = "Bitte geben Sie Ihren Benutzernamen ein (oder wechseln Sie auf Schnell-PIN).";
+        return;
+      }
+      if (!payload.pin_or_password) {
+        this.loginError = "Bitte Passwort bzw. Schnell-PIN eingeben.";
+        return;
+      }
+
+      this.isSubmitting = true;
       try {
         const res = await fetch("/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pin_or_password: this.loginPin }),
+          body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -246,35 +358,49 @@ function deliveryApp() {
         this.authToken = data.token;
         localStorage.setItem("it_ls_token", data.token);
         this.authenticated = true;
+        this.currentUser = data.user || null;
         this.loginPin = "";
-        const loginDlg = document.getElementById("login-dialog");
-        if (loginDlg && loginDlg.open) {
-          loginDlg.close();
-        }
+        this.showToast(
+          "Angemeldet",
+          this.currentUser ? `Angemeldet als ${this.currentUser.full_name}` : "Erfolgreich angemeldet.",
+          "success"
+        );
+        await this.checkAuthStatus();
         await this.loadInitialData();
       } catch (err) {
         this.loginError = err.message || "Verbindungsfehler.";
+      } finally {
+        this.isSubmitting = false;
       }
     },
 
     async logout() {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: this.authToken ? { "X-Auth-Token": this.authToken } : {},
+      });
       localStorage.removeItem("it_ls_token");
       this.authToken = "";
+      this.currentUser = null;
+      this.authenticated = false;
       await this.checkAuthStatus();
     },
 
     async loadInitialData() {
       this.isLoading = true;
       try {
-        await Promise.all([
+        const promises = [
           this.loadStats(),
           this.loadSchools(),
           this.loadStaff(),
           this.loadOpenNotes(),
           this.loadDraftAndReadyNotes(),
           this.loadArchivedNotes(),
-        ]);
+        ];
+        if (!this.currentUser || this.currentUser.role === "admin") {
+          promises.push(this.loadUsers(), this.loadSystemSettings());
+        }
+        await Promise.all(promises);
       } catch (err) {
         this.showToast("Fehler beim Laden", err.message, "error");
       } finally {
@@ -329,8 +455,215 @@ function deliveryApp() {
       } else if (tab === "admin") {
         this.loadSchools();
         this.loadStaff();
+      } else if (tab === "settings") {
+        this.loadUsers();
+        this.loadSystemSettings();
       }
       window.scrollTo({ top: 0, behavior: "smooth" });
+    },
+
+    // =========================================================================
+    // Lokale Benutzerverwaltung (/api/users)
+    // =========================================================================
+
+    async loadUsers() {
+      try {
+        this.usersList = await this.apiFetch("/api/users");
+      } catch (err) {
+        console.warn("Benutzerliste nicht geladen:", err.message);
+      }
+    },
+
+    resetUserForm() {
+      this.userFormError = "";
+      this.userForm = {
+        id: null,
+        username: "",
+        full_name: "",
+        email: "",
+        role: "staff",
+        password: "",
+        pin: "",
+        clear_pin: false,
+        active: true,
+        add_to_staff_list: true,
+      };
+    },
+
+    editUser(u) {
+      this.userFormError = "";
+      this.userForm = {
+        id: u.id,
+        username: u.username,
+        full_name: u.full_name,
+        email: u.email || "",
+        role: u.role,
+        password: "",
+        pin: "",
+        clear_pin: false,
+        active: u.active,
+        add_to_staff_list: false,
+      };
+    },
+
+    async saveUser() {
+      this.userFormError = "";
+      if (!this.userForm.username.trim() || !this.userForm.full_name.trim()) {
+        this.userFormError = "Benutzername und vollständiger Name sind Pflichtfelder.";
+        return;
+      }
+      if (!this.userForm.id && (!this.userForm.password || this.userForm.password.length < 4)) {
+        this.userFormError = "Bitte ein Passwort mit mindestens 4 Zeichen vergeben.";
+        return;
+      }
+
+      try {
+        if (this.userForm.id) {
+          await this.apiFetch(`/api/users/${this.userForm.id}`, {
+            method: "PUT",
+            body: JSON.stringify({
+              username: this.userForm.username.trim(),
+              full_name: this.userForm.full_name.trim(),
+              email: this.userForm.email ? this.userForm.email.trim() : null,
+              role: this.userForm.role,
+              password: this.userForm.password ? this.userForm.password : null,
+              pin: this.userForm.pin ? this.userForm.pin : null,
+              clear_pin: Boolean(this.userForm.clear_pin),
+              active: Boolean(this.userForm.active),
+            }),
+          });
+          this.showToast("Benutzer aktualisiert", this.userForm.full_name, "success");
+        } else {
+          await this.apiFetch("/api/users", {
+            method: "POST",
+            body: JSON.stringify({
+              username: this.userForm.username.trim(),
+              full_name: this.userForm.full_name.trim(),
+              email: this.userForm.email ? this.userForm.email.trim() : null,
+              role: this.userForm.role,
+              password: this.userForm.password,
+              pin: this.userForm.pin ? this.userForm.pin : null,
+              active: Boolean(this.userForm.active),
+              add_to_staff_list: Boolean(this.userForm.add_to_staff_list),
+            }),
+          });
+          this.showToast("Benutzer angelegt", this.userForm.full_name, "success");
+        }
+        this.resetUserForm();
+        await Promise.all([this.loadUsers(), this.loadStaff(), this.checkAuthStatus()]);
+      } catch (err) {
+        this.userFormError = err.message;
+      }
+    },
+
+    async deleteUser(u) {
+      if (!confirm(`Benutzerkonto "${u.full_name}" (${u.username}) wirklich löschen?`)) {
+        return;
+      }
+      try {
+        await this.apiFetch(`/api/users/${u.id}`, { method: "DELETE" });
+        this.showToast("Benutzer gelöscht", u.username, "info");
+        await this.loadUsers();
+      } catch (err) {
+        this.showToast("Löschen nicht möglich", err.message, "error");
+      }
+    },
+
+    // =========================================================================
+    // Konfigmenü / Systemeinstellungen (/api/settings)
+    // =========================================================================
+
+    async loadSystemSettings() {
+      try {
+        const data = await this.apiFetch("/api/settings");
+        this.settingsForm = {
+          app_title: data.app_title || "Digitaler IT-Lieferschein",
+          department_name: data.department_name || "",
+          department_subtitle: data.department_subtitle || "",
+          department_contact: data.department_contact || "",
+          auth_enabled: Boolean(data.auth_enabled),
+          smtp_enabled: Boolean(data.smtp_enabled),
+          smtp_host: data.smtp_host || "",
+          smtp_port: Number(data.smtp_port) || 587,
+          smtp_security: data.smtp_security || "starttls",
+          smtp_username: data.smtp_username || "",
+          smtp_password: "",
+          smtp_password_set: Boolean(data.smtp_password_set),
+          smtp_from_email: data.smtp_from_email || "",
+          smtp_from_name: data.smtp_from_name || "Schul-IT Lieferschein-System",
+          osticket_enabled: Boolean(data.osticket_enabled),
+          osticket_email: data.osticket_email || "",
+          global_archive_cc_email: data.global_archive_cc_email || "",
+        };
+        if (!this.testEmailRecipient && this.currentUser && this.currentUser.email) {
+          this.testEmailRecipient = this.currentUser.email;
+        }
+      } catch (err) {
+        console.warn("Systemeinstellungen konnten nicht geladen werden:", err.message);
+      }
+    },
+
+    async saveSystemSettings() {
+      this.isSubmitting = true;
+      try {
+        const payload = {
+          app_title: this.settingsForm.app_title,
+          department_name: this.settingsForm.department_name,
+          department_subtitle: this.settingsForm.department_subtitle,
+          department_contact: this.settingsForm.department_contact,
+          auth_enabled: Boolean(this.settingsForm.auth_enabled),
+          smtp_enabled: Boolean(this.settingsForm.smtp_enabled),
+          smtp_host: this.settingsForm.smtp_host,
+          smtp_port: Number(this.settingsForm.smtp_port) || 587,
+          smtp_security: this.settingsForm.smtp_security,
+          smtp_username: this.settingsForm.smtp_username,
+          smtp_password:
+            this.settingsForm.smtp_password && this.settingsForm.smtp_password.trim() !== ""
+              ? this.settingsForm.smtp_password
+              : "__UNCHANGED__",
+          smtp_from_email: this.settingsForm.smtp_from_email,
+          smtp_from_name: this.settingsForm.smtp_from_name,
+          osticket_enabled: Boolean(this.settingsForm.osticket_enabled),
+          osticket_email: this.settingsForm.osticket_email,
+          global_archive_cc_email: this.settingsForm.global_archive_cc_email,
+        };
+
+        await this.apiFetch("/api/settings", {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        await Promise.all([this.loadSystemSettings(), this.checkAuthStatus()]);
+        this.showToast(
+          "Konfiguration gespeichert",
+          "Alle Systemeinstellungen wurden dauerhaft in der Datenbank übernommen.",
+          "success"
+        );
+      } catch (err) {
+        this.showToast("Fehler beim Speichern", err.message, "error");
+      } finally {
+        this.isSubmitting = false;
+      }
+    },
+
+    async sendSmtpTestMail() {
+      if (!this.testEmailRecipient || !this.testEmailRecipient.includes("@")) {
+        this.showToast("Empfänger fehlt", "Bitte eine gültige E-Mail-Adresse für die Testmail eingeben.", "error");
+        return;
+      }
+      // Vor dem Test aktuelle Eingaben speichern
+      await this.saveSystemSettings();
+      this.isTestingSmtp = true;
+      try {
+        const res = await this.apiFetch("/api/settings/test-smtp", {
+          method: "POST",
+          body: JSON.stringify({ recipient_email: this.testEmailRecipient.trim() }),
+        });
+        this.showToast("SMTP-Test erfolgreich", res.message, "success");
+      } catch (err) {
+        this.showToast("SMTP-Test fehlgeschlagen", err.message, "error");
+      } finally {
+        this.isTestingSmtp = false;
+      }
     },
 
     // =========================================================================
@@ -676,11 +1009,25 @@ function deliveryApp() {
       this.handoverError = "";
 
       const activeStaff = this.staffList.filter((s) => s.active);
-      const defaultStaff = activeStaff.length > 0 ? activeStaff[0].name : "__custom__";
+      let defaultStaff = activeStaff.length > 0 ? activeStaff[0].name : "__custom__";
+      let customStaffName = "";
+
+      // Falls der aktuell angemeldete Benutzer in der Mitarbeiterliste steht, automatisch vorauswählen!
+      if (this.currentUser && this.currentUser.full_name) {
+        const match = activeStaff.find(
+          (s) => s.name.toLowerCase() === this.currentUser.full_name.toLowerCase()
+        );
+        if (match) {
+          defaultStaff = match.name;
+        } else {
+          defaultStaff = "__custom__";
+          customStaffName = this.currentUser.full_name;
+        }
+      }
 
       this.handoverForm = {
         delivered_by_select: defaultStaff,
-        delivered_by_custom: "",
+        delivered_by_custom: customStaffName,
         received_by: note.ordered_by || "",
         handover_notes: "",
         recipient_email: note.recipient_email || "",
