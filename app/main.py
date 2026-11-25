@@ -651,4 +651,7 @@ def preview_delivery_note_html(note_id: int, db: Session = Depends(get_db)):
 @app.get("/", response_class=HTMLResponse)
 def serve_spa():
     index_path = STATIC_DIR / "index.html"
-    return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+    return HTMLResponse(
+        content=index_path.read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
