@@ -129,10 +129,16 @@ def test_full_two_stage_workflow_and_security_headers():
         assert r_health.headers["x-content-type-options"] == "nosniff"
         assert r_health.headers["x-frame-options"] == "DENY"
         assert "default-src 'self'" in r_health.headers["content-security-policy"]
+        assert "'wasm-unsafe-eval'" in r_health.headers["content-security-policy"]
 
         r_fav = client.get("/favicon.ico")
         assert r_fav.status_code == 200
         assert "svg" in r_fav.headers["content-type"]
+
+        # Lokales Barcode-WASM muss mit application/wasm ausgeliefert werden
+        r_wasm = client.get("/static/vendor/zxing_reader.wasm")
+        assert r_wasm.status_code == 200
+        assert "application/wasm" in r_wasm.headers["content-type"]
 
         # Frontend nutzt nur lokale Bibliotheken (keine externen CDNs)
         r_spa = client.get("/")
@@ -140,6 +146,7 @@ def test_full_two_stage_workflow_and_security_headers():
         for forbidden_cdn in ("cdn.tailwindcss.com", "cdn.jsdelivr.net", "unpkg.com"):
             assert forbidden_cdn not in r_spa.text
         assert "/static/vendor/alpine.min.js" in r_spa.text
+        assert "/static/vendor/zxing-reader.iife.js" in r_spa.text
 
         schools = client.get("/api/schools").json()
         assert len(schools) >= 3

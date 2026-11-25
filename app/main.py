@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import mimetypes
 import secrets
 import time
 from collections import defaultdict, deque
@@ -61,6 +62,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+mimetypes.add_type("application/wasm", ".wasm")
+
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -74,7 +77,7 @@ _FAVICON_SVG = (
 
 _CSP_POLICY = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-eval'; "
+    "script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; "
     "style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data: blob:; "
     "font-src 'self' data:; "

@@ -186,9 +186,24 @@ function deliveryApp() {
     selectedArchiveNote: null,
     resendingEmailId: null,
 
-    // Barcode-Scanner (html5-qrcode)
-    html5QrCode: null,
+    // Barcode-Scanner (ZXing-WASM + iPad Foto-Fallback)
+    zxingConfigured: false,
+    scannerStream: null,
+    scannerTrack: null,
+    scannerCanvas: null,
+    scannerTimerId: null,
+    scannerDecoding: false,
+    scannerStarting: false,
     scannerActive: false,
+    scannerPaused: false,
+    scannerCameras: [],
+    scannerSelectedCameraId: localStorage.getItem("it_ls_camera_id") || "",
+    scannerCapabilities: { zoom: null, torch: false },
+    scannerZoom: 1,
+    scannerZoomOptions: [1, 1.5, 2, 3],
+    scannerTorchOn: false,
+    scannerCandidates: [],
+    scannerPhotoLoading: false,
     scannerTarget: { rowIndex: 0, field: "inventory_number" },
     scannerError: "",
     scannerManualCode: "",
@@ -213,6 +228,7 @@ function deliveryApp() {
 
     async init() {
       this.applyTheme(this.uiTheme);
+      this.configureZxingWasm();
       await this.checkAuthStatus();
       if (this.authenticated && !this.needsSetup) {
         await this.loadInitialData();
@@ -1093,43 +1109,396 @@ function deliveryApp() {
     },
 
     // =========================================================================
-    // Kamera-Barcode-Scanner (html5-qrcode) im nativen <dialog>
+    // Kamera-Barcode-Scanner (ZXing-WASM + iPadOS Safari & Foto-Scan Fallback)
     // =========================================================================
+
+    configureZxingWasm() {
+      if (this.zxingConfigured || typeof ZXingWASM === "undefined") return;
+      if (typeof ZXingWASM.setZXingModuleOverrides === "function") {
+        ZXingWASM.setZXingModuleOverrides({
+          locateFile: (file) =>
+            file.endsWith(".wasm")
+              ? "/static/vendor/zxing_reader.wasm?v=20261125-7"
+              : `/static/vendor/${file}`,
+        });
+      }
+      this.zxingConfigured = true;
+    },
+
+    _formatCameraError(err) {
+      const name = err?.name || "";
+      const rawMsg = err?.message ? ` (${err.message})` : "";
+      if (!window.isSecureContext) {
+        return "Kamerazugriff erfordert eine sichere HTTPS-Verbindung. Bitte nutzen Sie „Foto-Scan (Kamera-App)“ oder geben Sie den Code manuell ein.";
+      }
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        return "Kamerazugriff wurde verweigert. Bitte unter iPad-Einstellungen → Safari → Kamera für diese Seite erlauben oder unten „Foto-Scan (Kamera-App)“ nutzen.";
+      }
+      if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+        return "Keine Kamera gefunden. Bitte nutzen Sie „Foto-Scan (Kamera-App)“ oder geben Sie den Code manuell ein.";
+      }
+      if (name === "NotReadableError" || name === "TrackStartError") {
+        return "Die Kamera wird derzeit von einer anderen App blockiert. Bitte kurz schließen oder unten „Foto-Scan“ nutzen.";
+      }
+      return `Live-Kamera konnte nicht gestartet werden${rawMsg}. Alternativ funktioniert unten jederzeit „Foto-Scan (Kamera-App)“.`;
+    },
+
+    _extractUniqueBarcodes(results) {
+      const seen = new Set();
+      const unique = [];
+      for (const res of results || []) {
+        if (!res || res.isValid === false || !res.text) continue;
+        const text = String(res.text).trim();
+        if (!text || seen.has(text)) continue;
+        seen.add(text);
+        unique.push({
+          text,
+          format: res.format || "Barcode",
+        });
+      }
+      return unique;
+    },
 
     async openBarcodeScanner(rowIndex, field) {
       this.scannerTarget = { rowIndex, field };
       this.scannerError = "";
       this.scannerManualCode = "";
+      this.scannerCandidates = [];
+      this.scannerPaused = false;
+      this.scannerCapabilities = { zoom: null, torch: false };
+      this.scannerTorchOn = false;
+      this.configureZxingWasm();
 
       const dlg = document.getElementById("scanner-dialog");
       if (dlg && !dlg.open) {
         dlg.showModal();
       }
 
-      await this.$nextTick();
-      if (typeof Html5Qrcode === "undefined") {
-        this.scannerError = "Barcode-Scanner-Bibliothek nicht geladen. Bitte Code unten manuell eingeben.";
+      if (typeof ZXingWASM === "undefined") {
+        this.scannerError =
+          "Barcode-Decoder nicht geladen. Bitte Code unten manuell eingeben.";
         return;
       }
 
-      try {
-        if (this.html5QrCode && this.scannerActive) {
-          await this.stopBarcodeScanner();
-        }
-        this.html5QrCode = new Html5Qrcode("qr-reader");
-        this.scannerActive = true;
-        await this.html5QrCode.start(
-          { facingMode: "environment" },
-          { fps: 10, qrbox: { width: 250, height: 120 } },
-          (decodedText) => {
-            this.applyScannedCode(decodedText);
+      if (typeof ZXingWASM.prepareZXingModule === "function") {
+        ZXingWASM.prepareZXingModule({ fireImmediately: true }).catch(() => {});
+      }
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        this.scannerError = this._formatCameraError(null);
+        return;
+      }
+
+      await this.startCameraStream();
+    },
+
+    async startCameraStream(explicitDeviceId = null) {
+      this.stopBarcodeScanner();
+      this.scannerStarting = true;
+      this.scannerError = "";
+      this.scannerCandidates = [];
+      this.scannerPaused = false;
+
+      const preferredId = explicitDeviceId || this.scannerSelectedCameraId;
+      const attempts = [];
+      if (preferredId) {
+        attempts.push({
+          video: {
+            deviceId: { exact: preferredId },
+            width: { ideal: 1920, min: 640 },
+            height: { ideal: 1080, min: 480 },
           },
-          () => {}
-        );
-      } catch (err) {
+          audio: false,
+        });
+      }
+      attempts.push(
+        {
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920, min: 640 },
+            height: { ideal: 1080, min: 480 },
+          },
+          audio: false,
+        },
+        {
+          video: { facingMode: "environment" },
+          audio: false,
+        },
+        { video: true, audio: false }
+      );
+
+      let stream = null;
+      let lastErr = null;
+      for (let i = 0; i < attempts.length; i++) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(attempts[i]);
+          if (preferredId && i > 0) {
+            this.scannerSelectedCameraId = "";
+            localStorage.removeItem("it_ls_camera_id");
+          }
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
+            break;
+          }
+        }
+      }
+
+      if (!stream) {
+        this.scannerStarting = false;
         this.scannerActive = false;
-        this.scannerError =
-          "Kamerazugriff nicht möglich (HTTPS oder Berechtigung erforderlich). Sie können den Barcode unten direkt per Handscanner oder Tastatur eintragen.";
+        this.scannerError = this._formatCameraError(lastErr);
+        return;
+      }
+
+      const dlg = document.getElementById("scanner-dialog");
+      const videoEl = document.getElementById("scanner-video");
+      if (!dlg || !dlg.open || !videoEl) {
+        stream.getTracks().forEach((t) => t.stop());
+        this.scannerStarting = false;
+        return;
+      }
+
+      this.scannerStream = stream;
+      this.scannerTrack = stream.getVideoTracks()[0] || null;
+      videoEl.setAttribute("playsinline", "true");
+      videoEl.muted = true;
+      videoEl.srcObject = stream;
+
+      try {
+        await videoEl.play();
+      } catch (err) {
+        // Safari spielt oft automatisch sobald Metadaten da sind
+      }
+
+      this.scannerStarting = false;
+      this.scannerActive = true;
+
+      await this.refreshScannerCameras();
+      await this.configureTrackCapabilities();
+      this.scheduleScannerTick();
+    },
+
+    async refreshScannerCameras() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        this.scannerCameras = devices
+          .filter((d) => d.kind === "videoinput")
+          .map((d, idx) => ({
+            deviceId: d.deviceId,
+            label: d.label || `Kamera ${idx + 1}`,
+          }));
+        const activeId = this.scannerTrack?.getSettings?.().deviceId;
+        if (activeId) {
+          this.scannerSelectedCameraId = activeId;
+        }
+      } catch (e) {
+        this.scannerCameras = [];
+      }
+    },
+
+    async configureTrackCapabilities() {
+      if (!this.scannerTrack || typeof this.scannerTrack.getCapabilities !== "function") {
+        this.scannerCapabilities = { zoom: null, torch: false };
+        return;
+      }
+      try {
+        const caps = this.scannerTrack.getCapabilities() || {};
+        const zoomCaps = caps.zoom && typeof caps.zoom.max === "number" ? caps.zoom : null;
+        this.scannerCapabilities = {
+          zoom: zoomCaps,
+          torch: Boolean(caps.torch),
+        };
+
+        const advanced = {};
+        if (caps.focusMode && Array.isArray(caps.focusMode) && caps.focusMode.includes("continuous")) {
+          advanced.focusMode = "continuous";
+        }
+        if (zoomCaps) {
+          const minZ = zoomCaps.min ?? 1;
+          const maxZ = zoomCaps.max ?? 1;
+          const candidates = [1, 1.5, 2, 2.5, 3].filter((z) => z >= minZ && z <= maxZ);
+          if (!candidates.includes(minZ)) candidates.unshift(Number(minZ.toFixed(1)));
+          this.scannerZoomOptions = candidates;
+
+          const defaultZoom = maxZ >= 1.5 && minZ <= 1.0 ? 1.5 : minZ;
+          this.scannerZoom = defaultZoom;
+          if (defaultZoom !== minZ) {
+            advanced.zoom = defaultZoom;
+          }
+        }
+        if (Object.keys(advanced).length > 0 && typeof this.scannerTrack.applyConstraints === "function") {
+          await this.scannerTrack.applyConstraints({ advanced: [advanced] });
+        }
+      } catch (e) {
+        // Safari/iOS ignoriert nicht unterstützte Track-Constraints gefahrlos
+      }
+    },
+
+    async switchScannerCamera() {
+      if (!this.scannerSelectedCameraId) return;
+      localStorage.setItem("it_ls_camera_id", this.scannerSelectedCameraId);
+      await this.startCameraStream(this.scannerSelectedCameraId);
+    },
+
+    async applyScannerZoom() {
+      if (!this.scannerTrack || !this.scannerCapabilities.zoom) return;
+      try {
+        await this.scannerTrack.applyConstraints({
+          advanced: [{ zoom: Number(this.scannerZoom) }],
+        });
+      } catch (e) {
+        // ignore unsupported zoom steps
+      }
+    },
+
+    async toggleScannerTorch() {
+      if (!this.scannerTrack || !this.scannerCapabilities.torch) return;
+      const next = !this.scannerTorchOn;
+      try {
+        await this.scannerTrack.applyConstraints({
+          advanced: [{ torch: next }],
+        });
+        this.scannerTorchOn = next;
+      } catch (e) {
+        // ignore
+      }
+    },
+
+    async refocusScannerCamera() {
+      if (!this.scannerTrack || typeof this.scannerTrack.applyConstraints !== "function") return;
+      try {
+        const caps = this.scannerTrack.getCapabilities ? this.scannerTrack.getCapabilities() : {};
+        if (caps.focusMode && caps.focusMode.includes("single-shot")) {
+          await this.scannerTrack.applyConstraints({ advanced: [{ focusMode: "single-shot" }] });
+          setTimeout(() => {
+            if (this.scannerTrack && caps.focusMode.includes("continuous")) {
+              this.scannerTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
+            }
+          }, 400);
+        }
+      } catch (e) {
+        // ignore
+      }
+    },
+
+    scheduleScannerTick() {
+      if (!this.scannerActive || this.scannerPaused) return;
+      this.scannerTimerId = setTimeout(async () => {
+        await this.decodeCurrentVideoFrame();
+        if (this.scannerActive && !this.scannerPaused) {
+          this.scheduleScannerTick();
+        }
+      }, 110);
+    },
+
+    async decodeCurrentVideoFrame() {
+      if (!this.scannerActive || this.scannerPaused || this.scannerDecoding) return;
+      const videoEl = document.getElementById("scanner-video");
+      if (!videoEl || videoEl.readyState < 2 || !videoEl.videoWidth || !videoEl.videoHeight) return;
+
+      this.scannerDecoding = true;
+      try {
+        if (!this.scannerCanvas) {
+          this.scannerCanvas = document.createElement("canvas");
+        }
+        const scale = videoEl.videoWidth > 1600 ? 1600 / videoEl.videoWidth : 1;
+        const width = Math.max(1, Math.round(videoEl.videoWidth * scale));
+        const height = Math.max(1, Math.round(videoEl.videoHeight * scale));
+        if (this.scannerCanvas.width !== width) this.scannerCanvas.width = width;
+        if (this.scannerCanvas.height !== height) this.scannerCanvas.height = height;
+
+        const ctx = this.scannerCanvas.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(videoEl, 0, 0, width, height);
+        const imgData = ctx.getImageData(0, 0, width, height);
+
+        const results = await ZXingWASM.readBarcodes(imgData, {
+          tryHarder: true,
+          tryRotate: true,
+          tryInvert: true,
+          tryDownscale: true,
+          maxNumberOfSymbols: 4,
+        });
+        const unique = this._extractUniqueBarcodes(results);
+        if (unique.length === 1) {
+          this.applyScannedCode(unique[0].text);
+        } else if (unique.length > 1) {
+          this.scannerPaused = true;
+          this.scannerCandidates = unique;
+        }
+      } catch (e) {
+        // Frame konnte nicht dekodiert werden; beim nächsten Frame erneut versuchen
+      } finally {
+        this.scannerDecoding = false;
+      }
+    },
+
+    resumeBarcodeScanner() {
+      this.scannerCandidates = [];
+      this.scannerError = "";
+      this.scannerPaused = false;
+      this.scheduleScannerTick();
+    },
+
+    async scanBarcodeFromFile(event) {
+      const input = event.target;
+      const file = input?.files?.[0];
+      if (!file) return;
+      this.scannerError = "";
+      this.scannerCandidates = [];
+      this.scannerPhotoLoading = true;
+      this.configureZxingWasm();
+
+      try {
+        let results = [];
+        try {
+          const bitmap = await createImageBitmap(file);
+          const maxDim = 2200;
+          const scale =
+            Math.max(bitmap.width, bitmap.height) > maxDim
+              ? maxDim / Math.max(bitmap.width, bitmap.height)
+              : 1;
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+          canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+          const ctx = canvas.getContext("2d", { willReadFrequently: true });
+          ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+          bitmap.close?.();
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          results = await ZXingWASM.readBarcodes(imgData, {
+            tryHarder: true,
+            tryRotate: true,
+            tryInvert: true,
+            tryDownscale: true,
+            maxNumberOfSymbols: 6,
+          });
+        } catch (decodeErr) {
+          results = await ZXingWASM.readBarcodes(file, {
+            tryHarder: true,
+            tryRotate: true,
+            tryInvert: true,
+            tryDownscale: true,
+            maxNumberOfSymbols: 6,
+          });
+        }
+
+        const unique = this._extractUniqueBarcodes(results);
+        if (unique.length === 1) {
+          this.applyScannedCode(unique[0].text);
+        } else if (unique.length > 1) {
+          this.scannerPaused = true;
+          this.scannerCandidates = unique;
+        } else {
+          this.scannerError =
+            "Kein Barcode auf dem Foto erkannt. Bitte näher/schärfer fotografieren oder Code unten eintragen.";
+        }
+      } catch (err) {
+        this.scannerError = `Foto konnte nicht ausgewertet werden (${err?.message || "unbekannter Fehler"}).`;
+      } finally {
+        this.scannerPhotoLoading = false;
+        if (input) input.value = "";
       }
     },
 
@@ -1143,20 +1512,34 @@ function deliveryApp() {
       this.showToast("Barcode übernommen", `${code.trim()} wurde eingetragen.`, "info");
     },
 
-    async stopBarcodeScanner() {
-      if (this.html5QrCode && this.scannerActive) {
-        try {
-          await this.html5QrCode.stop();
-          await this.html5QrCode.clear();
-        } catch (e) {
-          // ignore
-        }
+    stopBarcodeScanner() {
+      if (this.scannerTimerId) {
+        clearTimeout(this.scannerTimerId);
+        this.scannerTimerId = null;
       }
+      if (this.scannerStream) {
+        this.scannerStream.getTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch (e) {
+            // ignore
+          }
+        });
+      }
+      const videoEl = document.getElementById("scanner-video");
+      if (videoEl) {
+        videoEl.srcObject = null;
+      }
+      this.scannerStream = null;
+      this.scannerTrack = null;
       this.scannerActive = false;
+      this.scannerStarting = false;
+      this.scannerDecoding = false;
+      this.scannerTorchOn = false;
     },
 
-    async closeBarcodeScanner() {
-      await this.stopBarcodeScanner();
+    closeBarcodeScanner() {
+      this.stopBarcodeScanner();
       const dlg = document.getElementById("scanner-dialog");
       if (dlg && dlg.open) {
         dlg.close();

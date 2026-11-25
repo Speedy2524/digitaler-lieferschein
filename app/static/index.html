@@ -6,12 +6,12 @@
   <title>Digitaler IT-Lieferschein – Kommunale Schul-IT</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <!-- Lokale Frontend-Bibliotheken (ohne externe CDNs) -->
-  <script src="/static/vendor/tailwindcss.min.js?v=20261125-6"></script>
-  <script src="/static/vendor/signature_pad.umd.min.js?v=20261125-6"></script>
-  <script src="/static/vendor/html5-qrcode.min.js?v=20261125-6"></script>
-  <script defer src="/static/vendor/alpine.min.js?v=20261125-6"></script>
+  <script src="/static/vendor/tailwindcss.min.js?v=20261125-7"></script>
+  <script src="/static/vendor/signature_pad.umd.min.js?v=20261125-7"></script>
+  <script src="/static/vendor/zxing-reader.iife.js?v=20261125-7"></script>
+  <script defer src="/static/vendor/alpine.min.js?v=20261125-7"></script>
   <!-- Custom Styles -->
-  <link rel="stylesheet" href="/static/styles.css?v=20261125-6">
+  <link rel="stylesheet" href="/static/styles.css?v=20261125-7">
 </head>
 <body class="min-h-screen flex flex-col antialiased" x-data="deliveryApp()" x-init="init()">
 
@@ -2205,22 +2205,109 @@
   </div>
 
   <!-- =====================================================================
-       MODAL 1: Kamera-Barcode-Scanner (natives <dialog> nach Guide: dialog)
+       MODAL 1: Kamera-Barcode-Scanner (ZXing-WASM + iPadOS Foto-Scan Fallback)
        ===================================================================== -->
   <dialog id="scanner-dialog" closedby="any" aria-labelledby="scanner-dialog-title" @close="stopBarcodeScanner()">
-    <div class="p-5 sm:p-6 bg-white">
-      <div class="flex items-center justify-between pb-3 mb-4 border-b border-zinc-200">
+    <div class="p-4 sm:p-6 bg-white">
+      <div class="flex items-center justify-between pb-3 mb-3 border-b border-zinc-200">
         <h1 id="scanner-dialog-title" class="text-base font-mono font-bold uppercase text-zinc-900">
           BARCODE / QR-CODE SCANNEN
         </h1>
-        <button type="button" @click="closeBarcodeScanner()" class="text-sm font-semibold text-zinc-500 hover:text-zinc-900 px-2 py-1" aria-label="Scanner schließen">
+        <button type="button" @click="closeBarcodeScanner()" class="text-sm font-semibold text-zinc-500 hover:text-zinc-900 px-2.5 py-1.5" aria-label="Scanner schließen">
           ✕
         </button>
       </div>
 
-      <div id="qr-reader" class="w-full overflow-hidden bg-zinc-900 min-h-[220px] mb-4"></div>
+      <!-- Live-Kamera-Ansicht -->
+      <div class="relative w-full bg-zinc-950 overflow-hidden aspect-[4/3] min-h-[240px] max-h-[50vh] mb-3 border border-zinc-300">
+        <video id="scanner-video"
+               autoplay
+               muted
+               playsinline
+               @click="refocusScannerCamera()"
+               class="w-full h-full object-cover cursor-pointer"></video>
 
-      <div x-show="scannerError" class="mb-4 p-3 bg-amber-50 border border-amber-300 text-xs text-amber-900" x-text="scannerError"></div>
+        <!-- Suchrahmen-Overlay (rein visuell, der Scanner dekodiert das gesamte HD-Bild inkl. Drehung) -->
+        <div x-show="scannerActive && !scannerPaused" class="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
+          <div class="w-full max-w-[340px] h-28 border-2 border-sky-400/80 rounded relative shadow-[0_0_0_9999px_rgba(0,0,0,0.32)]">
+            <div class="absolute inset-x-3 top-1/2 h-0.5 bg-sky-400/80"></div>
+          </div>
+          <span class="absolute bottom-2 px-2.5 py-1 bg-zinc-950/75 text-white text-[11px] font-mono rounded">
+            1D-Barcode oder QR/DataMatrix vor die Kamera halten
+          </span>
+        </div>
+
+        <div x-show="scannerStarting && !scannerError"
+             class="absolute inset-0 flex items-center justify-center bg-zinc-950/80 text-white text-xs font-mono">
+          Kamera wird initialisiert …
+        </div>
+      </div>
+
+      <!-- Kamera-Werkzeugleiste (Linse wechseln, Zoom für iPad-Nahaufnahme, Licht, Foto-Scan) -->
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <select x-show="scannerCameras.length > 1"
+                x-model="scannerSelectedCameraId"
+                @change="switchScannerCamera()"
+                aria-label="Kamera auswählen"
+                class="flex-1 min-w-[140px] border border-zinc-300 bg-zinc-50 px-2.5 py-1.5 text-xs font-mono">
+          <template x-for="cam in scannerCameras" :key="cam.deviceId">
+            <option :value="cam.deviceId" x-text="cam.label"></option>
+          </template>
+        </select>
+
+        <select x-show="scannerCapabilities.zoom"
+                x-model.number="scannerZoom"
+                @change="applyScannerZoom()"
+                aria-label="Kamera-Zoom"
+                class="border border-zinc-300 bg-zinc-50 px-2.5 py-1.5 text-xs font-mono">
+          <template x-for="z in scannerZoomOptions" :key="z">
+            <option :value="z" x-text="'Zoom ' + z + 'x'"></option>
+          </template>
+        </select>
+
+        <button type="button"
+                x-show="scannerCapabilities.torch"
+                @click="toggleScannerTorch()"
+                class="px-3 py-1.5 border text-xs font-mono font-semibold"
+                :class="scannerTorchOn ? 'bg-amber-400 text-zinc-950 border-amber-500' : 'bg-zinc-50 text-zinc-800 border-zinc-300'">
+          <span x-text="scannerTorchOn ? 'Licht AN' : 'Licht'"></span>
+        </button>
+
+        <label for="scanner-photo-input"
+               class="touch-btn inline-flex items-center justify-center px-3 py-1.5 bg-sky-700 hover:bg-sky-800 text-white text-xs font-mono font-bold cursor-pointer">
+          <span x-text="scannerPhotoLoading ? 'Werte Foto aus …' : 'Foto-Scan (Kamera-App)'"></span>
+        </label>
+        <input type="file"
+               id="scanner-photo-input"
+               accept="image/*"
+               capture="environment"
+               @change="scanBarcodeFromFile($event)"
+               class="sr-only">
+      </div>
+
+      <!-- Mehrfach-Treffer (z. B. wenn mehrere Barcodes übereinander auf einem Karton kleben) -->
+      <div x-show="scannerCandidates.length > 1" class="mb-3 p-3 bg-sky-50 border border-sky-300">
+        <div class="flex items-center justify-between gap-2 mb-2">
+          <p class="text-xs font-mono font-bold uppercase text-sky-950">
+            Mehrere Barcodes erkannt – gewünschten Code antippen:
+          </p>
+          <button type="button" @click="resumeBarcodeScanner()" class="text-xs font-mono underline text-sky-900">
+            Weiter scannen
+          </button>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <template x-for="cand in scannerCandidates" :key="cand.text">
+            <button type="button"
+                    @click="applyScannedCode(cand.text)"
+                    class="px-3 py-2 bg-white hover:bg-sky-100 border border-sky-400 text-left font-mono text-xs">
+              <span class="block text-[10px] uppercase text-sky-700" x-text="cand.format"></span>
+              <span class="font-bold text-zinc-900" x-text="cand.text"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <div x-show="scannerError" class="mb-3 p-3 bg-amber-50 border border-amber-300 text-xs text-amber-950" x-text="scannerError"></div>
 
       <form @submit.prevent="applyScannedCode(scannerManualCode)" action="#scanner" method="POST" class="space-y-3">
         <div>
@@ -2231,7 +2318,6 @@
                  id="scanner-manual-input"
                  name="manual_code"
                  x-model="scannerManualCode"
-                 autofocus
                  autocorrect="off"
                  autocapitalize="none"
                  spellcheck="false"
@@ -2399,6 +2485,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20261125-6"></script>
+  <script src="/static/app.js?v=20261125-7"></script>
 </body>
 </html>
