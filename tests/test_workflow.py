@@ -620,3 +620,59 @@ def test_smtp_encryption_png_validation_and_berlin_timezone():
             },
         )
         assert r_bad_sig.status_code == 422
+
+
+def test_bulk_40_ipads_delivery_note_and_search():
+    """Prüft Lieferscheine mit 40 Einzelpositionen (Rollout z. B. EDV-00120..EDV-00159), Suche und PDF-Erzeugung."""
+    with TestClient(app) as client:
+        _setup_admin(client)
+        headers = _csrf_headers(client)
+        schools = client.get("/api/schools").json()
+
+        items = [
+            {
+                "device_type": "Apple iPad 10. Gen 64GB",
+                "inventory_number": f"EDV-{120 + i:05d}",
+                "serial_number": f"DMQTEST{1000 + i}",
+                "supplier": "Bechtle AG",
+                "invoice_number": "RE-2026-400",
+                "quantity": 1,
+            }
+            for i in range(40)
+        ]
+
+        r_create = client.post(
+            "/api/delivery-notes",
+            headers=headers,
+            json={
+                "school_id": schools[0]["id"],
+                "recipient_email": schools[0]["email"],
+                "osticket_number": "401122",
+                "status": "BEREIT",
+                "items": items,
+            },
+        )
+        assert r_create.status_code == 201, r_create.text
+        created = r_create.json()
+        assert created["total_quantity"] == 40
+        assert len(created["items"]) == 40
+        assert created["items"][0]["inventory_number"] == "EDV-00120"
+        assert created["items"][39]["inventory_number"] == "EDV-00159"
+
+        # Einzelne mittlere Inventar- & Seriennummer muss über Archiv-/Bestandssuche auffindbar sein
+        r_search_inv = client.get("/api/delivery-notes?status=BEREIT&search=EDV-00137")
+        assert any(n["id"] == created["id"] for n in r_search_inv.json())
+        r_search_sn = client.get("/api/delivery-notes?status=BEREIT&search=DMQTEST1025")
+        assert any(n["id"] == created["id"] for n in r_search_sn.json())
+
+        r_complete = client.post(
+            f"/api/delivery-notes/{created['id']}/complete",
+            headers=headers,
+            json={
+                "delivered_by": "Julian Admin",
+                "received_by": "Schulsekretariat",
+                "signature_data": SAMPLE_SIGNATURE_PNG,
+            },
+        )
+        assert r_complete.status_code == 200
+        assert client.get(f"/api/delivery-notes/{created['id']}/pdf").content.startswith(b"%PDF")

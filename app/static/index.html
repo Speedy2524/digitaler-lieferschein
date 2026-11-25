@@ -6,12 +6,12 @@
   <title>Digitaler IT-Lieferschein – Kommunale Schul-IT</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <!-- Lokale Frontend-Bibliotheken (ohne externe CDNs) -->
-  <script src="/static/vendor/tailwindcss.min.js?v=20261125-7"></script>
-  <script src="/static/vendor/signature_pad.umd.min.js?v=20261125-7"></script>
-  <script src="/static/vendor/zxing-reader.iife.js?v=20261125-7"></script>
-  <script defer src="/static/vendor/alpine.min.js?v=20261125-7"></script>
+  <script src="/static/vendor/tailwindcss.min.js?v=20261125-8"></script>
+  <script src="/static/vendor/signature_pad.umd.min.js?v=20261125-8"></script>
+  <script src="/static/vendor/zxing-reader.iife.js?v=20261125-8"></script>
+  <script defer src="/static/vendor/alpine.min.js?v=20261125-8"></script>
   <!-- Custom Styles -->
-  <link rel="stylesheet" href="/static/styles.css?v=20261125-7">
+  <link rel="stylesheet" href="/static/styles.css?v=20261125-8">
 </head>
 <body class="min-h-screen flex flex-col antialiased" x-data="deliveryApp()" x-init="init()">
 
@@ -1140,13 +1140,20 @@
                     </div>
 
                     <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
-                      <button type="button"
-                              @click="addItemRow()"
-                              class="touch-btn bg-zinc-100 hover:bg-zinc-200 text-zinc-900 font-mono font-bold text-xs px-4 py-2 border border-zinc-300">
-                        + WEITERE POSITION [ENTER]
-                      </button>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <button type="button"
+                                @click="addItemRow()"
+                                class="touch-btn bg-zinc-100 hover:bg-zinc-200 text-zinc-900 font-mono font-bold text-xs px-4 py-2 border border-zinc-300">
+                          + WEITERE POSITION [ENTER]
+                        </button>
+                        <button type="button"
+                                @click="openBulkItemsModal()"
+                                class="touch-btn bg-sky-50 hover:bg-sky-100 text-sky-900 font-mono font-bold text-xs px-4 py-2 border border-sky-300">
+                          + SERIEN- / BULK-ERFASSUNG (Z. B. 40× IPAD)
+                        </button>
+                      </div>
                       <span class="text-xs font-mono text-zinc-500">
-                        [Enter] im Feld Seriennummer erzeugt automatisch die nächste Zeile.
+                        <span class="font-bold text-zinc-700" x-text="form.items.length + ' Pos.'"></span> · [Enter] in Seriennummer springt ins nächste Gerät.
                       </span>
                     </div>
                   </fieldset>
@@ -2337,6 +2344,189 @@
   </dialog>
 
   <!-- =====================================================================
+       MODAL 1b: Serien- & Bulk-Erfassung (Nummernreihe + Excel/CSV-Import)
+       ===================================================================== -->
+  <dialog id="bulk-items-dialog" closedby="any" aria-labelledby="bulk-dialog-title">
+    <div class="p-4 sm:p-6 bg-white">
+      <div class="flex items-center justify-between pb-3 mb-4 border-b border-zinc-200">
+        <div>
+          <h1 id="bulk-dialog-title" class="text-base font-mono font-bold uppercase text-zinc-900">
+            SERIEN- / BULK-ERFASSUNG (Z. B. 40× IPAD)
+          </h1>
+          <p class="text-xs text-zinc-600 mt-0.5">
+            Erzeugt fortlaufende Inventarnummern oder übernimmt ganze Listen aus Excel / MDM / CSV.
+          </p>
+        </div>
+        <button type="button" @click="closeBulkItemsModal()" class="text-sm font-semibold text-zinc-500 hover:text-zinc-900 px-2.5 py-1.5" aria-label="Bulk-Dialog schließen">
+          ✕
+        </button>
+      </div>
+
+      <!-- Modus-Umschalter -->
+      <div class="grid grid-cols-2 border border-zinc-300 bg-zinc-100 p-0.5 mb-4">
+        <button type="button"
+                @click="bulkForm.mode = 'range'; bulkError = ''"
+                class="py-2 text-xs font-mono font-bold uppercase transition"
+                :class="bulkForm.mode === 'range' ? 'bg-zinc-900 text-white' : 'text-zinc-700 hover:text-zinc-950'">
+          1. Nummernreihe (EDV-00120…)
+        </button>
+        <button type="button"
+                @click="bulkForm.mode = 'import'; bulkError = ''"
+                class="py-2 text-xs font-mono font-bold uppercase transition"
+                :class="bulkForm.mode === 'import' ? 'bg-zinc-900 text-white' : 'text-zinc-700 hover:text-zinc-950'">
+          2. Excel / CSV / Liste einfügen
+        </button>
+      </div>
+
+      <div x-show="bulkError" role="alert" class="mb-4 p-3 bg-red-50 border-l-4 border-red-600 text-xs font-semibold text-red-900" x-text="bulkError"></div>
+
+      <form @submit.prevent="applyBulkItems()" class="space-y-4">
+        <!-- Gemeinsame Gerätedaten -->
+        <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
+          <div class="sm:col-span-6">
+            <label for="bulk-device-type" class="block text-xs font-mono font-bold uppercase text-zinc-700 mb-1">
+              Gerätebezeichnung / Typ <span class="text-red-600">*</span>
+            </label>
+            <input type="text" id="bulk-device-type" x-model="bulkForm.device_type" required
+                   placeholder="z. B. Apple iPad 10. Gen 64GB"
+                   class="w-full border border-zinc-300 px-3 py-2 text-sm text-zinc-900">
+          </div>
+          <div class="sm:col-span-3">
+            <label for="bulk-supplier" class="block text-xs font-mono font-bold uppercase text-zinc-600 mb-1">
+              Lieferant (optional)
+            </label>
+            <input type="text" id="bulk-supplier" x-model="bulkForm.supplier"
+                   placeholder="z. B. Bechtle / Cancom"
+                   class="w-full border border-zinc-300 px-3 py-2 text-sm text-zinc-900">
+          </div>
+          <div class="sm:col-span-3">
+            <label for="bulk-invoice" class="block text-xs font-mono font-bold uppercase text-zinc-600 mb-1">
+              Rechnungs-Nr. (optional)
+            </label>
+            <input type="text" id="bulk-invoice" x-model="bulkForm.invoice_number"
+                   placeholder="RE-2026-..."
+                   class="w-full border border-zinc-300 px-3 py-2 text-sm font-mono text-zinc-900">
+          </div>
+        </div>
+
+        <!-- TAB 1: Fortlaufende Nummernreihe -->
+        <div x-show="bulkForm.mode === 'range'" class="space-y-3 border border-zinc-200 p-3.5 bg-zinc-50">
+          <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
+            <div class="sm:col-span-5">
+              <label for="bulk-start-inv" class="block text-xs font-mono font-bold uppercase text-zinc-700 mb-1">
+                Start-Inventarnummer <span class="text-red-600">*</span>
+              </label>
+              <input type="text" id="bulk-start-inv" x-model="bulkForm.start_inventory"
+                     @input="onBulkStartOrCountChange()"
+                     autocorrect="off" autocapitalize="none" spellcheck="false"
+                     placeholder="z. B. EDV-00120"
+                     class="w-full border border-zinc-300 bg-white px-3 py-2 text-sm font-mono font-bold text-zinc-900">
+            </div>
+            <div class="sm:col-span-3">
+              <label for="bulk-count" class="block text-xs font-mono font-bold uppercase text-zinc-700 mb-1">
+                Anzahl Geräte
+              </label>
+              <input type="number" id="bulk-count" x-model.number="bulkForm.count"
+                     @input="onBulkStartOrCountChange()"
+                     min="1" max="500"
+                     class="w-full border border-zinc-300 bg-white px-3 py-2 text-sm font-mono font-bold text-center text-zinc-900">
+            </div>
+            <div class="sm:col-span-4">
+              <label for="bulk-end-inv" class="block text-xs font-mono font-bold uppercase text-zinc-600 mb-1">
+                Bis-Inventarnummer
+              </label>
+              <input type="text" id="bulk-end-inv" x-model="bulkForm.end_inventory"
+                     @input="onBulkEndInventoryChange()"
+                     autocorrect="off" autocapitalize="none" spellcheck="false"
+                     placeholder="z. B. EDV-00159"
+                     class="w-full border border-zinc-300 bg-white px-3 py-2 text-sm font-mono text-zinc-900">
+            </div>
+          </div>
+
+          <div>
+            <label for="bulk-serial-lines" class="block text-xs font-semibold text-zinc-700 mb-1">
+              Seriennummern direkt zuordnen (optional, 1 pro Zeile – z. B. aus MDM / Handscanner):
+            </label>
+            <textarea id="bulk-serial-lines" x-model="bulkForm.serial_lines" rows="4"
+                      autocorrect="off" autocapitalize="none" spellcheck="false"
+                      placeholder="Leer lassen, wenn Sie die Seriennummern anschließend direkt nacheinander am Karton abscannten möchten …"
+                      class="w-full border border-zinc-300 bg-white p-2.5 text-xs font-mono text-zinc-900"></textarea>
+            <p class="text-[11px] text-zinc-500 mt-1">
+              Tipp: Wenn die Inventarnummern erzeugt sind, springt <kbd class="px-1 bg-zinc-200 font-mono">Enter</kbd> beim Scannen automatisch von Seriennummer zu Seriennummer.
+            </p>
+          </div>
+        </div>
+
+        <!-- TAB 2: Copy & Paste / CSV / Excel Import -->
+        <div x-show="bulkForm.mode === 'import'" class="space-y-3 border border-zinc-200 p-3.5 bg-zinc-50">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label for="bulk-single-col-type" class="block text-xs font-mono font-bold uppercase text-zinc-700 mb-1">
+                Format bei 1-spaltigen Listen
+              </label>
+              <select id="bulk-single-col-type" x-model="bulkForm.single_col_type"
+                      class="w-full border border-zinc-300 bg-white px-2.5 py-2 text-xs font-semibold">
+                <option value="serial_with_start">Nur Seriennummern (+ Start-Inventarnummer rechts)</option>
+                <option value="inventory_only">Nur Inventarnummern (ohne Seriennummer)</option>
+              </select>
+            </div>
+            <div x-show="bulkForm.single_col_type === 'serial_with_start'">
+              <label for="bulk-import-start-inv" class="block text-xs font-mono font-bold uppercase text-zinc-700 mb-1">
+                Start-Inventarnummer
+              </label>
+              <input type="text" id="bulk-import-start-inv" x-model="bulkForm.start_inventory"
+                     autocorrect="off" autocapitalize="none" spellcheck="false"
+                     placeholder="z. B. EDV-00120"
+                     class="w-full border border-zinc-300 bg-white px-3 py-2 text-sm font-mono text-zinc-900">
+            </div>
+          </div>
+
+          <div>
+            <label for="bulk-import-text" class="block text-xs font-semibold text-zinc-700 mb-1">
+              Liste aus Excel, MDM oder CSV einfügen (1 Gerät pro Zeile; 2 Spalten mit Tab, <code>;</code> oder <code>,</code> möglich):
+            </label>
+            <textarea id="bulk-import-text" x-model="bulkForm.import_text" rows="6"
+                      autocorrect="off" autocapitalize="none" spellcheck="false"
+                      placeholder="Beispiel (2 Spalten aus Excel/CSV):&#10;EDV-00120;DMQ9182ABCD&#10;EDV-00121;DMQ9182ABCE&#10;&#10;Oder nur Seriennummern untereinander:&#10;DMQ9182ABCD&#10;DMQ9182ABCE"
+                      class="w-full border border-zinc-300 bg-white p-2.5 text-xs font-mono text-zinc-900"></textarea>
+          </div>
+        </div>
+
+        <!-- Live-Vorschau -->
+        <template x-if="getBulkPreviewSummary().valid">
+          <div class="p-3 bg-emerald-50 border border-emerald-300 text-xs text-emerald-950 font-mono">
+            <div class="font-bold" x-text="'Vorschau: ' + getBulkPreviewSummary().count + ' Position(en) bereit zur Übernahme'"></div>
+            <div class="mt-1 space-y-0.5 text-[11px] text-emerald-900">
+              <template x-for="(s, idx) in getBulkPreviewSummary().sample" :key="idx">
+                <div x-text="(idx + 1) + '. ' + s.inventory_number + (s.serial_number ? (' · S/N: ' + s.serial_number) : ' · (ohne S/N)')"></div>
+              </template>
+              <div x-show="getBulkPreviewSummary().last"
+                   x-text="'… bis ' + getBulkPreviewSummary().count + '. ' + getBulkPreviewSummary().last?.inventory_number + (getBulkPreviewSummary().last?.serial_number ? (' · S/N: ' + getBulkPreviewSummary().last.serial_number) : '')"></div>
+            </div>
+          </div>
+        </template>
+
+        <div class="flex items-center justify-between gap-2 pt-2 border-t border-zinc-200">
+          <label class="inline-flex items-center gap-2 text-xs text-zinc-700">
+            <input type="checkbox" x-model="bulkForm.replace_empty_rows" class="w-4 h-4">
+            <span>Leere Standardzeilen ersetzen</span>
+          </label>
+          <div class="flex gap-2">
+            <button type="button" @click="closeBulkItemsModal()"
+                    class="px-4 py-2 border border-zinc-300 text-xs font-semibold text-zinc-700">
+              Abbrechen
+            </button>
+            <button type="submit"
+                    class="touch-btn px-5 py-2 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-bold">
+              Positionen übernehmen →
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- =====================================================================
        MODAL 2: Archiv-Details & Versandstatus (natives <dialog>)
        ===================================================================== -->
   <dialog id="detail-dialog" closedby="any" aria-labelledby="detail-dialog-title">
@@ -2485,6 +2675,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20261125-7"></script>
+  <script src="/static/app.js?v=20261125-8"></script>
 </body>
 </html>

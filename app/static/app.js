@@ -208,6 +208,22 @@ function deliveryApp() {
     scannerError: "",
     scannerManualCode: "",
 
+    // Serien- / Bulk-Erfassung (z. B. 40 iPads auf einmal oder Excel/CSV-Import)
+    bulkError: "",
+    bulkForm: {
+      mode: "range", // 'range' | 'import'
+      device_type: "",
+      supplier: "",
+      invoice_number: "",
+      start_inventory: "",
+      end_inventory: "",
+      count: 10,
+      serial_lines: "",
+      import_text: "",
+      single_col_type: "serial_with_start", // 'serial_with_start' | 'inventory_only'
+      replace_empty_rows: true,
+    },
+
     // Admin: Schule & Mitarbeiter Formulare
     schoolForm: {
       id: null,
@@ -944,9 +960,262 @@ function deliveryApp() {
             if (nextEl) nextEl.focus();
           });
         } else {
-          const nextEl = document.getElementById(`item-inv-${index + 1}`);
+          const nextIdx = index + 1;
+          const nextItem = this.form.items[nextIdx];
+          // Wenn Inventarnummer schon z. B. per Bulk-Generator befüllt ist, direkt zur nächsten Seriennummer springen
+          const targetId =
+            nextItem && nextItem.inventory_number && nextItem.inventory_number.trim()
+              ? `item-sn-${nextIdx}`
+              : `item-inv-${nextIdx}`;
+          const nextEl = document.getElementById(targetId);
           if (nextEl) nextEl.focus();
         }
+      }
+    },
+
+    // =========================================================================
+    // Serien- / Bulk-Erfassung (Nummernreihe + Copy&Paste / CSV-Import)
+    // =========================================================================
+
+    parseInventoryToken(raw) {
+      const cleaned = (raw || "").trim();
+      const m = cleaned.match(/^(.*?)(\d+)$/);
+      if (!m) return null;
+      return {
+        prefix: m[1],
+        num: parseInt(m[2], 10),
+        width: m[2].length,
+      };
+    },
+
+    formatInventoryNumber(parsed, offset) {
+      const value = parsed.num + offset;
+      return `${parsed.prefix}${String(value).padStart(parsed.width, "0")}`;
+    },
+
+    onBulkStartOrCountChange() {
+      const startParsed = this.parseInventoryToken(this.bulkForm.start_inventory);
+      const count = Math.max(1, Math.min(500, parseInt(this.bulkForm.count, 10) || 1));
+      if (startParsed) {
+        this.bulkForm.end_inventory = this.formatInventoryNumber(startParsed, count - 1);
+      }
+    },
+
+    onBulkEndInventoryChange() {
+      const startParsed = this.parseInventoryToken(this.bulkForm.start_inventory);
+      const endParsed = this.parseInventoryToken(this.bulkForm.end_inventory);
+      if (startParsed && endParsed && startParsed.prefix === endParsed.prefix && endParsed.num >= startParsed.num) {
+        const diff = endParsed.num - startParsed.num + 1;
+        if (diff <= 500) {
+          this.bulkForm.count = diff;
+        }
+      }
+    },
+
+    buildBulkPreviewItems() {
+      const deviceType = (this.bulkForm.device_type || "").trim();
+      const supplier = (this.bulkForm.supplier || "").trim();
+      const invoice = (this.bulkForm.invoice_number || "").trim();
+
+      if (!deviceType) {
+        return { error: "Bitte zuerst eine Gerätebezeichnung / Typ angeben.", items: [] };
+      }
+
+      if (this.bulkForm.mode === "range") {
+        const startParsed = this.parseInventoryToken(this.bulkForm.start_inventory);
+        if (!startParsed) {
+          return {
+            error: "Bitte eine Start-Inventarnummer mit Ziffern am Ende eingeben (z. B. EDV-00120).",
+            items: [],
+          };
+        }
+
+        let count = parseInt(this.bulkForm.count, 10);
+        const endRaw = (this.bulkForm.end_inventory || "").trim();
+        if (endRaw) {
+          const endParsed = this.parseInventoryToken(endRaw);
+          if (!endParsed || endParsed.prefix !== startParsed.prefix || endParsed.num < startParsed.num) {
+            return {
+              error: `Bis-Inventarnummer muss mit „${startParsed.prefix}“ beginnen und >= Startnummer sein.`,
+              items: [],
+            };
+          }
+          count = endParsed.num - startParsed.num + 1;
+        }
+
+        if (!Number.isInteger(count) || count < 1 || count > 500) {
+          return { error: "Bitte eine gültige Stückzahl zwischen 1 und 500 angeben.", items: [] };
+        }
+
+        const serials = (this.bulkForm.serial_lines || "")
+          .split(/\r?\n/)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+
+        const items = [];
+        for (let i = 0; i < count; i++) {
+          items.push({
+            device_type: deviceType,
+            inventory_number: this.formatInventoryNumber(startParsed, i),
+            serial_number: serials[i] || "",
+            supplier,
+            invoice_number: invoice,
+            quantity: 1,
+          });
+        }
+        return { error: "", items };
+      }
+
+      // Modus: 'import' (Excel / CSV / Scanner-Liste)
+      const lines = (this.bulkForm.import_text || "")
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+
+      if (lines.length === 0) {
+        return { error: "Bitte mindestens eine Zeile in das Importfeld einfügen.", items: [] };
+      }
+      if (lines.length > 500) {
+        return { error: "Maximal 500 Positionen pro Import möglich.", items: [] };
+      }
+
+      const startParsed =
+        this.bulkForm.single_col_type === "serial_with_start"
+          ? this.parseInventoryToken(this.bulkForm.start_inventory)
+          : null;
+
+      const items = [];
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const parts = line
+          .split(/\t|;|,/)
+          .map((p) => p.trim())
+          .filter((p, idx) => idx < 2 || p.length > 0);
+
+        if (parts.length >= 2 && parts[0] && parts[1]) {
+          items.push({
+            device_type: deviceType,
+            inventory_number: parts[0],
+            serial_number: parts[1],
+            supplier,
+            invoice_number: invoice,
+            quantity: 1,
+          });
+        } else {
+          const val = parts[0] || line;
+          if (this.bulkForm.single_col_type === "serial_with_start") {
+            if (!startParsed) {
+              return {
+                error:
+                  "Für einspaltige Seriennummern bitte oben eine Start-Inventarnummer (z. B. EDV-00120) angeben oder 2 Spalten (Inventarnummer;Seriennummer) einfügen.",
+                items: [],
+              };
+            }
+            items.push({
+              device_type: deviceType,
+              inventory_number: this.formatInventoryNumber(startParsed, i),
+              serial_number: val,
+              supplier,
+              invoice_number: invoice,
+              quantity: 1,
+            });
+          } else {
+            items.push({
+              device_type: deviceType,
+              inventory_number: val,
+              serial_number: "",
+              supplier,
+              invoice_number: invoice,
+              quantity: 1,
+            });
+          }
+        }
+      }
+      return { error: "", items };
+    },
+
+    getBulkPreviewSummary() {
+      if (!this.bulkForm.device_type.trim()) {
+        return { valid: false, error: "", count: 0, sample: [] };
+      }
+      const res = this.buildBulkPreviewItems();
+      return {
+        valid: !res.error && res.items.length > 0,
+        error: res.error,
+        count: res.items.length,
+        sample: res.items.slice(0, 3),
+        last: res.items.length > 3 ? res.items[res.items.length - 1] : null,
+      };
+    },
+
+    openBulkItemsModal() {
+      this.bulkError = "";
+      const refItem =
+        this.form.items.find((i) => i.device_type.trim() || i.supplier?.trim() || i.invoice_number?.trim()) ||
+        this.form.items[0];
+      if (!this.bulkForm.device_type && refItem?.device_type) {
+        this.bulkForm.device_type = refItem.device_type;
+      }
+      if (!this.bulkForm.supplier && refItem?.supplier) {
+        this.bulkForm.supplier = refItem.supplier;
+      }
+      if (!this.bulkForm.invoice_number && refItem?.invoice_number) {
+        this.bulkForm.invoice_number = refItem.invoice_number;
+      }
+      if (this.bulkForm.start_inventory && !this.bulkForm.end_inventory) {
+        this.onBulkStartOrCountChange();
+      }
+      const dlg = document.getElementById("bulk-items-dialog");
+      if (dlg && !dlg.open) {
+        dlg.showModal();
+      }
+    },
+
+    closeBulkItemsModal() {
+      const dlg = document.getElementById("bulk-items-dialog");
+      if (dlg && dlg.open) {
+        dlg.close();
+      }
+    },
+
+    applyBulkItems() {
+      this.bulkError = "";
+      const res = this.buildBulkPreviewItems();
+      if (res.error) {
+        this.bulkError = res.error;
+        return;
+      }
+      if (res.items.length === 0) {
+        this.bulkError = "Es konnten keine Positionen erzeugt werden.";
+        return;
+      }
+
+      const startOffset = this.bulkForm.replace_empty_rows
+        ? this.form.items.filter(
+            (i) => i.device_type.trim() !== "" || i.inventory_number.trim() !== "" || (i.serial_number && i.serial_number.trim() !== "")
+          )
+        : [...this.form.items];
+
+      const firstNewIndex = startOffset.length;
+      this.form.items = startOffset.concat(res.items);
+
+      this.closeBulkItemsModal();
+      this.showToast(
+        `${res.items.length} Positionen übernommen`,
+        res.items.some((i) => !i.serial_number)
+          ? "Die Inventarnummern sind befüllt – Sie können jetzt nacheinander alle Seriennummern scannen."
+          : "Alle Inventar- und Seriennummern wurden eingetragen.",
+        "success"
+      );
+
+      const firstMissingSnIdx = this.form.items.findIndex(
+        (i, idx) => idx >= firstNewIndex && (!i.serial_number || !i.serial_number.trim())
+      );
+      if (firstMissingSnIdx !== -1) {
+        this.$nextTick(() => {
+          const el = document.getElementById(`item-sn-${firstMissingSnIdx}`);
+          if (el) el.focus();
+        });
       }
     },
 
